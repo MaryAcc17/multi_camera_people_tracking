@@ -1,0 +1,19 @@
+{% block social_layer -%}
+      social_layer:
+        plugin: "nav2_social_costmap_plugin::SocialLayer"
+        people_topic: "/jackal/detected_people"
+        enabled: True
+        cutoff: 10.0
+        amplitude: 255.0
+        publish_occgrid: False
+        use_passing: False
+        use_vel_factor: True 
+        speed_factor_multiplier: 5.0
+        covariance_front_height: 0.25
+        covariance_front_width: 0.25
+        covariance_rear_height: 0.25
+        covariance_rear_width: 0.25
+        covariance_right_height: 0.01
+        covariance_right_width: 0.01
+        covariance_when_still: 0.25
+{% endblock -%}

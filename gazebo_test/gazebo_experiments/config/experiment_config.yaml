@@ -1,0 +1,17 @@
+experiment_manager:
+  ros__parameters:
+    # IF A PARAMETER IS SET IN THE LAUNCH FILE, IT SHOULD NOT BE SET HERE SINCE IT WILL BE OVERRIDDEN BY THE LAUNCH FILE
+    # The parameters like use_sim_time and use_recorder are placeholders needed to be set in the launch file
+    use_sim_time: #THIS IS SET IN THE LAUNCH FILE (default: True) Since the simulation is running in Gazebo, we need to set this to True
+    use_recorder: #THIS IS SET IN THE LAUNCH FILE (default: False) (if True, the experiment manager will record the bag files)
+    use_evaluator: #THIS IS SET IN THE LAUNCH FILE (default: False) (if True, the experiment manager will use the hunav evaluator to compute the metrics)
+    use_namespace: #THIS IS SET IN THE LAUNCH FILE (default: False) (if True, the experiment manager will use the hunav evaluator to compute the metrics)
+    record_maps: #THIS IS SET IN THE LAUNCH FILE (default: False) (if True, the bag recorder will record the map topics)
+    wait_before_start: #THIS IS SET IN THE LAUNCH FILE (default: None) (Number of seconds to wait before starting the experiment to let the environment settle)
+    resume_checkpoint: #THIS IS SET IN THE LAUNCH FILE (default: False) (if True, the experiment manager will resume from the last checkpoint)
+    checkpoint_dsn: #THIS IS SET IN THE LAUNCH FILE (default: None) (PostgreSQL DSN for the checkpoint store)
+    algorithm_name: "test_algorithm"
+    base_path: "/workspaces/hunavsim_devcontainer/results/gazebo_experiments"
+    timeout_duration: 60.0
+    repetitions: 1
+    goals_and_poses_file: "/workspaces/hunavsim_ws/src/gazebo_test/gazebo_experiments/goals_and_poses/social_nav.yaml"

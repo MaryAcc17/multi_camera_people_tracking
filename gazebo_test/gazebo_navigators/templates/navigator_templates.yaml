@@ -1,0 +1,8 @@
+# Registered Navigators Registry
+# This file will be populated by the registration system
+navigators_templates:
+  - only_controller
+
+only_controller:
+  template: 'nav_templates/only_controller.yaml.j2'
+  description: 'Navigator in which only the controller is selectable'

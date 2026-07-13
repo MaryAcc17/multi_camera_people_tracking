@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+
+import optuna
+import subprocess
+import yaml
+import time
+import os
+from ament_index_python.packages import get_package_share_directory
+import pandas as pd
+
+original_param_file = os.path.join(
+    get_package_share_directory("gazebo_optimization"), "config", "nav2_params.yaml"
+)
+
+params_to_optimize_file = os.path.join(
+    get_package_share_directory("gazebo_optimization"),
+    "config",
+    "params_to_optimize.yaml",
+)
+
+
+def load_params_from_file(file_path):
+    with open(file_path, "r") as file:
+        return yaml.safe_load(file)
+
+
+def substitute_controller_params(original_params, new_params):
+    param_dict = original_params.copy()
+    controller_params = (
+        original_params.get("controller_server", {})
+        .get("ros__parameters", {})
+        .get("FollowPath", {})
+        .get("optimizer", {})
+        .get("weights", {})
+    )
+    for key, value in new_params.items():
+        if key in controller_params:
+            controller_params[key] = new_params.get(key, value)
+        else:
+            print(f"Warning: {key} not found in original parameters.")
+    return param_dict
+
+
+def parse_output_for_cost(output):
+    # This function should parse the output of the experiment to extract the path of the file where the cost is stored.
+    # For demonstration purposes, let's assume the output contains a line like "Log file: /path/to/log/file"
+    lines = output.splitlines()
+    for line in lines:
+        if "Log file:" in line:
+            log_file_path = line.split("Log file:")[1].strip()
+            # Read the log file to get the cost
+            # load the csv file in a pandas dataframe
+            df = pd.read_csv(log_file_path)
+            # Assuming the cost is in a column named 'path_length'
+            if "path_length" in df.columns:
+                cost = df["path_length"].mean()  # or use another aggregation method
+                cost2 = df["social_work"].mean()  # Assuming another metric
+                cost3 = df["time_to_reach_goal"].mean()  # Assuming another metric
+                print(f"Extracted cost: {cost}, {cost2}, {cost3}")
+                return cost, cost2, cost3
+    raise ValueError("Cost not found in the output. Please check the output format.")
+
+
+def run_experiment(param_dict):
+
+    original_param_dict = load_params_from_file(original_param_file)
+    # get the controller parameters from the original file
+    controller_params = original_param_dict.get("controller_server", {}).get(
+        "ros__parameters", {}
+    )
+
+    params = substitute_controller_params(original_param_dict, param_dict)
+    # Save parameters to YAML
+    with open("/tmp/nav2_params.yaml", "w") as f:
+        # yaml.dump({"controller_server": {"ros__parameters": param_dict}}, f)
+        yaml.dump(params, f)
+
+    # Launch your ROS2 stack (simulate this step)
+    result = subprocess.run(
+        [
+            "ros2",
+            "run",
+            "gazebo_test",
+            "full_experiment",
+            "social_nav",  # TODO: change this to a parameter
+            "--hunav-eval",
+            "--headless",
+            "--no-rviz",
+            "--base-path-for-results",
+            "/workspaces/hunavsim_ws/optuna_studies/gazebo_test",
+            "--algorithm-name",
+            "test_algorithm",  # TODO: change this to a parameter
+            # "--evaluation-metrics-file",
+            "--nav-params",
+            "/tmp/nav2_params.yaml",
+        ],
+        stdout=subprocess.PIPE,
+    )
+    result.check_returncode()  # Ensure the command was successful
+
+    # Simulate reading a metric (e.g., path length or goal reached)
+    cost = parse_output_for_cost(result.stdout.decode())
+    return cost
+
+
+def get_suggested_params(trial, weight_ranges):
+    return {
+        key: trial.suggest_float(key, val["min"], val["max"])
+        for key, val in weight_ranges.items()
+    }
+
+
+def parse_parameters_to_optimize(trial, file_path):
+    # Load the parameters to optimize from the specified file
+    to_optimize = load_params_from_file(file_path)
+    # create a dictionary with the trials parameters
+    weight_ranges = (
+        to_optimize.get("FollowPath", {}).get("optimizer", {}).get("weights", {})
+    )
+    # if the weight_ranges is empty, raise an error
+    # return the ranges for each parameter
+    suggested_params = get_suggested_params(trial, weight_ranges)
+    return suggested_params
+
+
+def objective(trial):
+    params = parse_parameters_to_optimize(trial, params_to_optimize_file)
+    return run_experiment(params)
+
+
+def main():
+    study = optuna.create_study(
+        directions=["minimize", "minimize", "minimize"],
+        study_name="gazebo_test_study",
+        storage="sqlite:///gazebo_test_study.db",
+        load_if_exists=True,
+    )
+    study.optimize(objective, n_trials=2)
+
+    print("Best value:", study.best_values)
+    print("Best trial number:", study.best_trials)
+
+
+if __name__ == "__main__":
+    main()

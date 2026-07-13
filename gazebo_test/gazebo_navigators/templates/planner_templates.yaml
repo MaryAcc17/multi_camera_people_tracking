@@ -1,0 +1,8 @@
+# Registered Planners Registry
+# This file will be populated by the registration system
+planners_templates:
+  - navfn
+  
+navfn:
+  template: 'planners/navfn_planner.yaml.j2'
+  description: 'NavFn planner'

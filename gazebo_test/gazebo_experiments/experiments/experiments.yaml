@@ -1,0 +1,55 @@
+experiments:
+  - social_nav
+  - social_env_test
+  - social_nav_test
+  - social_env_7_test
+  - social_nav_obstacles
+  - social_scenarios
+
+social_nav:
+  goals_and_poses:
+    goals_and_poses/social_nav.yaml
+  map:
+    maps/social_nav_map.yaml
+  world:
+    social_nav.world
+  world_pkg_name:
+    gazebo_sim
+  agents_configuration_file:
+    agents_envs/social_nav.yaml
+  config_pkg_name:
+    gazebo_sim
+  camera_config_file:
+    camera_configs/social_nav.yaml
+
+social_env_test:
+  goals_and_poses:
+    goals_and_poses/social_env_test.yaml
+  map:
+    maps/social_env_test_map.yaml
+  world:
+    social_env_test.world
+  world_pkg_name:
+    gazebo_sim
+  agents_configuration_file:
+    agents_envs/social_env_test.yaml
+  config_pkg_name:
+    gazebo_sim
+  camera_config_file:
+    camera_configs/social_env_test.yaml
+
+social_nav_test:
+  goals_and_poses:
+    goals_and_poses/social_nav_test.yaml
+  map:
+    maps/social_nav_map.yaml
+  world:
+    social_nav.world
+  world_pkg_name:
+    gazebo_sim
+  agents_configuration_file:
+    agents_envs/social_nav.yaml
+  config_pkg_name:
+    gazebo_sim
+  camera_config_file:
+    camera_configs/social_nav_test.yaml

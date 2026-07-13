@@ -1,0 +1,42 @@
+{% block controller_config -%}
+      plugin: "social_force_window_planner::SFWPlannerNode"
+      controller_frame: map
+      robot_base_frame: base_link
+      max_trans_vel:        0.6
+      min_trans_vel:        0.08
+      max_rot_vel:          1.57 
+      min_rot_vel:          0.52 
+      max_trans_acc:        0.15
+      max_rot_acc:          0.52 
+      min_in_place_rot_vel: 0.7 
+      yaw_goal_tolerance:   0.2
+      xy_goal_tolerance:    0.2
+      wp_tolerance:         1.0
+      sim_time:             2.5
+      sim_granularity:      0.25
+      robot_radius:         0.4
+      people_radius:        0.35
+      is_circular:          false
+      
+      # sfm params
+      sfm_goal_weight:      1.0
+      sfm_obstacle_weight:  15.0
+      sfm_people_weight:    8.0
+
+      # cost function weights  #[0.1,5.0]
+      social_weight:        {% if controller.social_plugin is defined and controller.social_plugin %}2.0{% else %}0.0{% endif %}
+
+      costmap_weight:       2.0
+      velocity_weight:      0.8
+      angle_weight:         0.6
+      distance_weight:      1.0
+
+      #sensor interface params
+      sensor_interface:
+        laser_topic:        /front/scan
+        people_topic:       /jackal/detected_people 
+        odom_topic:         /jackal/ground_truth
+        max_obstacle_dist:  3.0
+        naive_goal_time:    1.0
+        people_velocity:    0.5
+{% endblock -%}

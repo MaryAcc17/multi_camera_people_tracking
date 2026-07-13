@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Capture a single bird-eye snapshot from the Gazebo simulation."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from pathlib import Path
+import threading
+from typing import Optional
+
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from gazebo_test.utils.camera import CameraCapturer
+
+from gazebo_test.utils.trajectory_recorder import PeopleTrajectoryRecorder
+import rclpy
+from rclpy.executors import MultiThreadedExecutor
+from ament_index_python.packages import get_package_share_directory
+
+
+class EnvironmentSnapshotNode(Node):
+    def __init__(self) -> None:
+        super().__init__("environment_snapshot")
+
+        self._output_dir = Path(
+            self.declare_parameter("output_dir", "gazebo_snapshots")
+            .get_parameter_value()
+            .string_value
+        ).expanduser()
+
+        self._experiment_tag = (
+            self.declare_parameter("experiment_tag", "environment")
+            .get_parameter_value()
+            .string_value
+        )
+        self._run_id = int(
+            self.declare_parameter("run_id", 0).get_parameter_value().integer_value
+        )
+        self._stage_label = (
+            self.declare_parameter("stage_label", "bird_eye")
+            .get_parameter_value()
+            .string_value
+            or "bird_eye"
+        )
+        self._capture_delay = float(
+            self.declare_parameter("capture_delay_sec", 5.0)
+            .get_parameter_value()
+            .double_value
+        )
+        self.declare_parameter("record_people_trajectories", True)
+        self._record_people = (
+            self.get_parameter("record_people_trajectories")
+            .get_parameter_value()
+            .bool_value
+        )
+
+        self._people_record_duration = (
+            self.declare_parameter("people_trajectory_duration_sec", 40.0)
+            .get_parameter_value()
+            .double_value
+        )
+
+        self._trajectory_recorder: Optional[PeopleTrajectoryRecorder] = None
+        if self._record_people:
+            self._trajectory_recorder = PeopleTrajectoryRecorder(self)
+
+        self.declare_parameter("camera_position", Parameter.Type.DOUBLE_ARRAY)
+        camera_position = (
+            self.get_parameter("camera_position")
+            .get_parameter_value()
+            .double_array_value
+        )
+        self.declare_parameter("camera_orientation_rpy", Parameter.Type.DOUBLE_ARRAY)
+        camera_orientation_rpy = (
+            self.get_parameter("camera_orientation_rpy")
+            .get_parameter_value()
+            .double_array_value
+        )
+        self.declare_parameter("camera_model_path", Parameter.Type.STRING)
+        camera_model_param = (
+            self.get_parameter("camera_model_path").get_parameter_value().string_value
+        )
+        if not camera_model_param:
+            raise ValueError("Parameter 'camera_model_path' must be provided")
+        camera_model_path = self._resolve_camera_model_path(camera_model_param)
+
+        self.declare_parameter("image_timeout_sec", 5.0)
+        image_timeout_sec = (
+            self.get_parameter("image_timeout_sec").get_parameter_value().double_value
+        )
+
+        self._capturer = CameraCapturer(
+            self,
+            base_output_dir=self._output_dir,
+            entity_name="bird_eye_camera",
+            image_topic="bird_eye_camera_sensor/image_raw",
+            image_encoding="bgr8",
+            camera_position=camera_position,
+            camera_orientation_rpy=camera_orientation_rpy,
+            camera_model_path=camera_model_path,
+            reference_frame="",
+            image_timeout_sec=image_timeout_sec,
+        )
+
+    def _resolve_camera_model_path(self, value: str) -> Path:
+        if value.startswith("package://"):
+            package_and_path = value[len("package://") :]
+            if "/" not in package_and_path:
+                raise ValueError(
+                    f"Invalid package URI '{value}'. Expected format package://<pkg>/<path>"
+                )
+            pkg_name, relative_path = package_and_path.split("/", 1)
+            pkg_share = Path(get_package_share_directory(pkg_name))
+            return (pkg_share / relative_path).expanduser()
+        return Path(value).expanduser()
+
+    def _format_snapshot_basename(self) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"run{self._run_id:03d}_{timestamp}"
+
+    async def _sleep_with_callbacks(self, duration: float) -> None:
+        """Async sleep helper that leaves executor threads free to drive callbacks."""
+        remaining = max(0.0, duration)
+        if remaining <= 0:
+            return
+        await asyncio.sleep(remaining)
+
+    async def _ensure_people_recording_duration(self) -> None:
+        if not self._trajectory_recorder:
+            return
+        first_sample = await self._wait_for_first_people_sample()
+        if not first_sample:
+            self.get_logger().warning(
+                "No people trajectory messages were received; skipping dwell time"
+            )
+            return
+        remaining = (
+            self._people_record_duration - self._trajectory_recorder.elapsed_time_sec
+        )
+        if remaining <= 0:
+            return
+        self.get_logger().info(
+            f"Waiting {remaining:.1f} seconds to reach requested people trajectory duration "
+            f"({self._people_record_duration:.1f} s total)"
+        )
+        await self._sleep_with_callbacks(remaining)
+
+    async def _capture_snapshot_async(self) -> Optional[Path]:
+        return await asyncio.to_thread(
+            self._capturer.capture_snapshot,
+            experiment_tag=self._experiment_tag,
+            run_id=self._run_id,
+            stage=self._stage_label,
+            target_dir=self._output_dir,
+        )
+
+    def _build_trajectory_path(self, snapshot_path: Optional[Path]) -> Path:
+        if snapshot_path:
+            # remove the "{stage}_raw" suffix if present
+            if snapshot_path.stem.endswith("_raw"):
+                snapshot_path = snapshot_path.with_name(snapshot_path.stem[:-4])
+
+            snapshot_path = snapshot_path.with_name(
+                f"{snapshot_path.stem}_people_trajectories.yaml"
+            )
+            # replace the "images" directory with "trajectories" if present
+            if "/images/" in snapshot_path.as_posix():
+                snapshot_path = Path(
+                    snapshot_path.as_posix().replace("/images/", "/trajectories/")
+                )
+            return snapshot_path
+        basename = self._format_snapshot_basename()
+        return self._output_dir / f"{basename}_people_trajectories.yaml"
+
+    async def _export_people_trajectories(self, snapshot_path: Optional[Path]) -> None:
+        if not self._trajectory_recorder:
+            return
+        trajectory_path = self._build_trajectory_path(snapshot_path)
+        await asyncio.to_thread(
+            self._trajectory_recorder.export,
+            destination=trajectory_path,
+            experiment_tag=self._experiment_tag,
+            run_id=self._run_id,
+            stage=self._stage_label,
+        )
+
+    async def _wait_for_first_people_sample(self) -> bool:
+        if not self._trajectory_recorder:
+            return False
+        if self._trajectory_recorder.first_sample_received:
+            return True
+        self.get_logger().info(
+            f"Waiting for first people trajectory message on "
+            f"'{self._trajectory_recorder.topic_name}'"
+        )
+        while rclpy.ok():
+            signaled = await asyncio.to_thread(
+                self._trajectory_recorder.wait_for_first_sample, 0.5
+            )
+            if signaled:
+                self.get_logger().info(
+                    "First people trajectory message received; starting dwell timer"
+                )
+                return True
+        return False
+
+    async def run_once(self) -> None:
+        snapshot_result: Optional[Path] = None
+
+        camera_ready = await self._capturer.prepare_for_capture()
+
+        if self._capture_delay > 0:
+            self.get_logger().info(
+                f"Waiting {self._capture_delay:.2f} seconds before capturing"
+            )
+            await self._sleep_with_callbacks(self._capture_delay)
+
+        if not camera_ready:
+            self.get_logger().error(
+                "Failed to prepare the camera; skipping snapshot capture"
+            )
+        else:
+            snapshot_result = await self._capture_snapshot_async()
+            if snapshot_result:
+                self.get_logger().info(f"Snapshot saved to {snapshot_result}")
+            else:
+                self.get_logger().warning("Snapshot capture failed")
+        await self._ensure_people_recording_duration()
+        await self._export_people_trajectories(snapshot_result)
+
+    def execute(self) -> None:
+        executor = MultiThreadedExecutor(num_threads=2)
+        executor.add_node(self)
+        executor_thread = threading.Thread(target=executor.spin, daemon=True)
+        executor_thread.start()
+        try:
+            asyncio.run(self.run_once())
+        finally:
+            executor.shutdown()
+            executor_thread.join()
+
+
+def main() -> None:
+    rclpy.init()
+    node = EnvironmentSnapshotNode()
+    try:
+        node.execute()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

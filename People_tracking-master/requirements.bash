@@ -1,0 +1,10 @@
+pip3 install numpy==1.26.4
+pip3 install torch==2.8.0
+pip3 install openvino==2025.3.0
+pip3 install loguru===0.7.3
+pip3 install lap==0.5.12
+pip3 install opencv-python==4.10.0.82
+pip3 install scipy==1.15.3
+pip3 install matplotlib==3.10.7
+pip3 install ultralytics==8.3.130
+pip3 install ipywidgets==8.1.7

@@ -1,0 +1,500 @@
+#!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+import argparse
+import textwrap
+import libtmux
+from libtmux.exc import LibTmuxException
+import os
+import time
+import argcomplete
+from pathlib import Path
+import pandas as pd
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from ament_index_python import get_resources, get_resource
+from typing import Optional, List, Dict, Tuple
+import warnings
+
+from gazebo_test.script_utils.parsing_utils import (
+    print_summary,
+    parse_experiment_name,
+    get_experiment_ids,
+)
+
+from gazebo_test.script_utils.navigator_utils import (
+    get_navigator_yaml,
+    list_available_navigators,
+)
+
+from gazebo_test.utils.checkpoint_store import ExperimentCheckpointStore
+
+
+def _print_experiments():
+    """
+    Print the list of experiments.
+    """
+    experiment_names = get_experiment_ids()
+    print("Available experiments:\n")
+    for name in experiment_names:
+        print(f"      - {name}")
+
+
+def _print_navigators():
+    """
+    Print the list of navigators.
+    """
+    navigator_names = list_available_navigators()
+    print("Available navigators:\n")
+    for name in navigator_names:
+        print(f"      - {name}")
+
+
+def isolate_experiment(ros_domain_id: int) -> Tuple[int, str]:
+    """
+    Isolate the experiment by setting the ROS_DOMAIN_ID.
+    This is useful to avoid conflicts with other ROS nodes.
+    """
+    if ros_domain_id < 0 or ros_domain_id > 1023:
+        raise ValueError("ROS_DOMAIN_ID must be between 0 and 1023.")
+
+    os.environ["ROS_DOMAIN_ID"] = str(ros_domain_id)
+    gazebo_uri = f"http://localhost:{ros_domain_id * 10 + 11345}"
+    return ros_domain_id, gazebo_uri
+
+
+def main():
+
+    # Parse command-line arguments
+    main_parser = argparse.ArgumentParser(
+        description="""Run a full experiment in Gazebo with navigation and evaluation.
+        Use the run subcommand to start the experiment.
+        """
+    )
+
+    sub_parser = main_parser.add_subparsers(dest="cmd", required=True)
+
+    run_parser = sub_parser.add_parser(
+        "run", help="Run a full experiment in Gazebo with navigation and evaluation."
+    )
+    run_parser.add_argument(
+        "--bag-record", action="store_true", help="Enable bag recording"
+    )
+    run_parser.add_argument(
+        "--hunav-eval",
+        action="store_true",
+        help="Enable hunav evaluation mode (use hunav_eval.launch.py)",
+    )
+
+    run_parser.add_argument(
+        "--record-maps",
+        action="store_true",
+        help="Record map topics in the bag files (map, global and local costmap)",
+    )
+
+    run_parser.add_argument(
+        "--headless", action="store_true", help="Run Gazebo in headless mode"
+    )
+
+    run_parser.add_argument("--no-rviz", action="store_true", help="Do not start RViz")
+
+    run_parser.add_argument(
+        "--wait-after-finish",
+        action="store_true",
+        help="Wait for the user to press Ctrl+C after the test is finished",
+    )
+
+    run_parser.add_argument(
+        "--no-gpu",
+        action="store_true",
+        help="Do not use GPU for rendering (use CPU instead)",
+    )
+
+    run_parser.add_argument(
+        "experiment",
+        action="store",
+        default="social_nav",
+        help="The Experiment to run (chosen by the list of available experiments)\
+            Hint: Use 'list' command to see all available experiments.",
+    )
+
+    run_parser.add_argument(
+        "--wait-before-start",
+        type=int,
+        default=None,
+        help="Number of seconds to wait before starting the experiment (to let the environment settle)",
+    )
+
+    run_parser.add_argument(
+        "--nav-params",
+        action="store",
+        default=None,
+        help="The path to the navigation parameters file",
+    )
+
+    run_parser.add_argument(
+        "--navigator",
+        action="store",
+        default=None,
+        help="The navigation controller to use. \
+        Hint: Use 'list' command to see all available controllers.",
+    )
+
+    run_parser.add_argument(
+        "--checkpoint-dsn",
+        action="store",
+        default=os.environ.get("GAZEBO_TEST_CHECKPOINT_DSN", ""),
+        help="PostgreSQL DSN for the shared checkpoint store.",
+    )
+    run_parser.add_argument(
+        "--disable-checkpoint",
+        action="store_true",
+        help="Disable checkpoint/database usage even if a DSN is configured.",
+    )
+
+    run_parser.add_argument(
+        "--resume-checkpoint",
+        action="store_true",
+        help="Resume experiments by skipping runs listed in the checkpoint file.",
+    )
+
+    run_parser.add_argument(
+        "--evaluation-metrics-file",
+        action="store",
+        default=os.path.join(
+            get_package_share_directory("hunav_evaluator"),
+            "config",
+            "metrics.yaml",
+        ),
+        help="The path to the evaluation metrics file",
+    )
+
+    run_parser.add_argument(
+        "--base-path-for-results",
+        action="store",
+        default=None,
+        help="The base path for the results of the experiment",
+    )
+    run_parser.add_argument(
+        "--algorithm-name",
+        action="store",
+        default=None,
+        help="The name of the algorithm used in the experiment",
+    )
+
+    run_parser.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=0,
+        help="The ROS domain ID to isolate the experiment (0-1023)",
+    )
+
+    run_parser.add_argument(
+        "--exp-config-pkg",
+        action="store",
+        default=None,
+        help="The package containing the experiment configuration files",
+    )
+
+    run_parser.add_argument(
+        "--additional-launch-files",
+        nargs="*",
+        default=[],
+        action="extend",
+        help=textwrap.dedent(
+            "Additional launch files to run in the experiment. "
+            "You can specify multiple launch files by separating them with spaces. "
+            "It is recommended to use quotes for each launch file if they contain spaces, "
+            'e.g., --additional-launch-files "my_pkg my_launch.py" "another_pkg another_launch.py". '
+            "Or you can use a single string if it is an absolute path, "
+            'e.g., --additional-launch-files "/path/to/my_pkg my_launch.py".'
+        ),
+    )
+
+    run_parser.set_defaults(func=run)
+    ls_parser = sub_parser.add_parser("list", help="List all available experiments.")
+    ls_parser.set_defaults(
+        func=lambda args: [
+            _print_experiments(),  # new line
+            print(""),  # new line
+            _print_navigators(),
+        ]
+    )  # new line
+    argcomplete.autocomplete(main_parser, always_complete_options=False)
+
+    args = main_parser.parse_args()
+    args.func(args)
+
+
+def run(args: argparse.Namespace):
+    """Run the specified experiment."""
+    experiment_dict = parse_experiment_name(args.experiment)
+
+    world = experiment_dict.get("world", "")
+    map = experiment_dict.get("map", "")
+    goals_and_poses = experiment_dict.get("goals_and_poses", "")
+    agents_configuration_file = experiment_dict.get("agents_configuration_file", "")
+    world_pkg_name = experiment_dict.get("world_pkg_name", "")
+    agents_pkg_name = experiment_dict.get("agents_pkg_name", "")
+
+    checkpoint_dsn_value = (args.checkpoint_dsn or "").strip()
+    checkpoint_enabled = bool(checkpoint_dsn_value)
+    if args.disable_checkpoint:
+        if checkpoint_enabled:
+            print("Checkpoint store disabled by request; ignoring provided DSN.")
+        checkpoint_dsn_value = ""
+        checkpoint_enabled = False
+
+    if checkpoint_enabled and ExperimentCheckpointStore is None:
+        raise RuntimeError(
+            "Checkpoint store support is unavailable because the 'psycopg' dependency is missing. Install it or rerun with --disable-checkpoint."
+        )
+    selected_algorithm_name = (args.algorithm_name or "").strip()
+    if not selected_algorithm_name:
+        selected_algorithm_name = (args.navigator or "").strip()
+    if not selected_algorithm_name:
+        selected_algorithm_name = "unknown"
+    experiment_identifier = Path(goals_and_poses).stem
+
+    if checkpoint_enabled:
+        assert ExperimentCheckpointStore is not None
+        try:
+            checkpoint_store = ExperimentCheckpointStore(checkpoint_dsn_value)
+            existing_jobs = checkpoint_store.list_jobs(  # type: ignore[attr-defined]
+                algorithm=selected_algorithm_name,
+                experiment_identifier=experiment_identifier,
+            )
+            if existing_jobs:
+                if not checkpoint_store.has_incomplete_jobs(  # type: ignore[attr-defined]
+                    algorithm=selected_algorithm_name,
+                    experiment_identifier=experiment_identifier,
+                ):
+                    print(
+                        "All experiment runs are already completed according to the checkpoint store; skipping launch."
+                    )
+                    return
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"Warning: unable to query checkpoint store ({exc}); proceeding with full launch."
+            )
+            checkpoint_dsn_value = ""
+            checkpoint_enabled = False
+
+    if args.resume_checkpoint and not checkpoint_enabled:
+        print(
+            "--resume-checkpoint requested without an active checkpoint database; completed runs will be detected from previous outcomes files instead."
+        )
+
+    ros_domain_id, gazebo_uri = isolate_experiment(args.ros_domain_id)
+    # Create a new tmux server
+    server = libtmux.Server()
+
+    # Check if the session already exists
+    session_name = "gazebo_test_" + ros_domain_id.__str__()
+    try:
+        if session_name in server.sessions:
+            print(f"Session '{session_name}' already exists. Exiting.")
+            return
+    except LibTmuxException:
+        print("Tmux server not running. Starting a new server.")
+
+    # Create a new tmux session
+
+    with server.new_session(
+        session_name=session_name,
+        environment={
+            "ROS_DOMAIN_ID": str(ros_domain_id),
+            "GAZEBO_MASTER_URI": gazebo_uri,
+        },
+    ) as session:
+        print(f"Created new session: {session_name}")
+        print(
+            f"Set ROS_DOMAIN_ID to {session.getenv('ROS_DOMAIN_ID')} and GAZEBO_MASTER_URI to {session.getenv('GAZEBO_MASTER_URI')}"
+        )
+
+        # Create a window for gazebo simulation
+        window = session.active_window
+        window.rename_window("Gazebo")
+        print("Created new window: Gazebo")
+        # Start the Gazebo simulation
+        pane = window.panes[0]
+        pane.select()
+        gpu_env_var = (
+            "__GLX_VENDOR_LIBRARY_NAME=nvidia __NV_PRIME_RENDER_OFFLOAD=1 "
+            if not args.no_gpu
+            else ""
+        )
+        pane.send_keys(
+            f"{gpu_env_var}ros2 launch gazebo_sim simulation.launch.py headless:={args.headless} world_pkg_name:={world_pkg_name} base_world:={world} \
+                agents_configuration_file:={agents_configuration_file} config_pkg_name:={agents_pkg_name} \
+                    use_lidar_gpu:={not args.no_gpu}"
+        )
+        print("Started Gazebo simulation")
+
+        session.new_window(attach=True, window_name="Navigation")
+        window = session.active_window
+        window.rename_window("Navigation")
+        print("Created new window: Navigation")
+        # Start the navigation stack
+        pane = window.panes[0]
+        pane.select()
+        navigator_path = None
+        if args.nav_params:
+            if args.navigator is not None:
+                warnings.warn(
+                    "Both navigation parameters file and navigator specified. Using the navigator to generate the parameters file."
+                )
+                navigator_path = args.navigator
+            else:
+                print(
+                    f"Using navigation parameters file: {args.nav_params} (ignoring navigator)"
+                )
+                navigator_path = args.nav_params
+        elif args.navigator:
+            print(f"Using navigator: {args.navigator} to generate the parameters file")
+            navigator_path = get_navigator_yaml(args.navigator)
+            print(f"Generated navigation parameters file at: {navigator_path}")
+        else:
+            print(
+                "No navigation parameters file or navigator specified. Using default nav2_params.yaml"
+            )
+            navigator_path = os.path.join(
+                get_package_share_directory("gazebo_experiments"),
+                "config",
+                "nav2_params.yaml",
+            )
+            print(f"Using default navigation parameters file: {navigator_path}")
+        pane.send_keys(
+            f"ros2 launch gazebo_test bringup.launch.py map:={map} \
+            params_file:={navigator_path}"
+        )
+        print("Started navigation stack")
+
+        # Create a new pane for RViz
+        if not args.no_rviz:
+            session.new_window(attach=True, window_name="RViz")
+            window = session.active_window
+            window.rename_window("RViz")
+            print("Created new window: RViz")
+            # Start RViz
+            pane = window.panes[0]
+            pane.select()
+            pane.send_keys("ros2 launch gazebo_test rviz.launch.py")
+            print("Started RViz")
+        if args.hunav_eval:
+            session.new_window(attach=True, window_name="Hunav Eval")
+            window = session.active_window
+            window.rename_window("Hunav Eval")
+            print("Created new window: Hunav Eval")
+            # Start the hunav evaluation
+            pane = window.panes[0]
+            pane.select()
+            pane.send_keys(
+                f"ros2 launch hunav_evaluator hunav_evaluator_launch.py \
+                metrics_file:={args.evaluation_metrics_file}"
+            )
+
+            print("Started hunav evaluation")
+
+        # for each additional launch file, create a new pane and run the launch file
+        for launch_file in args.additional_launch_files:
+            session.new_window(attach=True, window_name=Path(launch_file).stem)
+            window = session.active_window
+            window.rename_window(Path(launch_file).stem)
+            print(f"Created new window: {Path(launch_file).stem}")
+            # Start the additional launch file
+            pane = window.panes[0]
+            pane.select()
+            pane.send_keys(f"ros2 launch {launch_file}")
+            print(f"Started additional launch file: {launch_file}")
+
+        session.new_window(attach=True)
+        window = session.active_window
+        window.rename_window("gazebo test")
+        print("Created new window: gazebo test")
+        # Start the gazebo test
+        pane = window.panes[0]
+        pane.select()
+
+        base_path_for_results = (
+            f"base_path:={args.base_path_for_results}"
+            if args.base_path_for_results
+            else ""
+        )
+        algorithm_name = ""
+        if not args.algorithm_name:
+            if args.navigator:
+                algorithm_name = f"algorithm_name:={args.navigator}"
+        else:
+            algorithm_name = f"algorithm_name:={args.algorithm_name}"
+
+        exp_config_pkg = (
+            f"exp_config_pkg:={args.exp_config_pkg}" if args.exp_config_pkg else ""
+        )
+        wait_before_start = (
+            f"wait_before_start:={args.wait_before_start}"
+            if args.wait_before_start
+            else ""
+        )
+        checkpoint_arg = ""
+        if checkpoint_enabled and checkpoint_dsn_value:
+            checkpoint_arg = f"checkpoint_dsn:={checkpoint_dsn_value}"
+            print("Using PostgreSQL checkpoint store via provided DSN")
+        elif not checkpoint_enabled and checkpoint_dsn_value:
+            # Should not happen because disabled mode clears the DSN, but keep for safety.
+            checkpoint_dsn_value = ""
+
+        resume_checkpoint = (
+            f"resume_checkpoint:={str(args.resume_checkpoint).lower()}"
+            if args.resume_checkpoint is not None
+            else ""
+        )
+        pane.send_keys(
+            f"ros2 launch gazebo_test experiment_manager.launch.py use_recorder:={args.bag_record}\
+                use_evaluator:={args.hunav_eval} record_maps:={args.record_maps} \
+                goals_and_poses_file:={goals_and_poses} \
+                {base_path_for_results} \
+                {algorithm_name} \
+                {exp_config_pkg} \
+                {wait_before_start} \
+                {checkpoint_arg} \
+                {resume_checkpoint} \
+                ; tmux wait-for -S process_finished_{ros_domain_id}"
+        )
+        print("Started gazebo test")
+
+        # run until the user presses Ctrl+C or until the gazebo test is finished
+
+        try:
+
+            server.cmd("wait-for", f"process_finished_{ros_domain_id}")
+
+            print("Gazebo test finished")
+            # retrieve the log of the gazebo test
+            current_panel = "".join(pane.capture_pane())
+            # get the path of the log file
+            log_path: Optional[str] = None
+            for line in current_panel.splitlines():
+                if "Experiment outcomes saved to" in line:
+                    log_path = line.split("Experiment outcomes saved to", 1)[1]
+                    log_path = log_path.split("[")[0].strip()
+                    break
+            if log_path:
+                print_summary(Path(log_path))
+            else:
+                print(
+                    "Unable to locate the experiment outcomes file in the log output; summary not generated."
+                )
+            # wait until the keyboard interrupt
+            if args.wait_after_finish:
+                print("Press Ctrl+C to exit...")
+                while True:
+                    time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Cleanup: kill the session
+            print("Exiting...")
+
+
+if __name__ == "__main__":
+    main()

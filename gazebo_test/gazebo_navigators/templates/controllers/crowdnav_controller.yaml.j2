@@ -1,0 +1,36 @@
+{% block controller_config -%}
+      plugin: "nav2_pybind::PybindControllerBase"
+      python_class: "nav2_pybind_crowdnav_controller.crowdnav_controller.CrowdNavController"
+
+      sensor_plugins:
+        - "ros2_pybind_sensor_plugins.sensors.people.PeopleStream"
+
+      # Path to the serialized CrowdNav policy checkpoint.
+      model_path: "$(find-pkg-share nav2_pybind_crowdnav_controller)/models/{% if controller.policy_name is defined %}{{ controller.policy_name }}{% else %}sarl{% endif %}/rl_model.pth"
+      model_device: "cuda:0"         # or "cpu"
+
+      # Set when the model file stores a plain state dict.
+      policy_name: {% if controller.policy_name is defined %}"{{ controller.policy_name }}"{% else %}"sarl"{% endif %}
+
+      state_dict_key: "policy_state_dict"
+      policy_config_path: "$(find-pkg-share nav2_pybind_crowdnav_controller)/models/{% if controller.policy_name is defined %}{{ controller.policy_name }}{% else %}sarl{% endif %}/policy.config"
+      
+      # People and obstacle handling
+      people_identifier: "/jackal/detected_people"
+      static_cost_threshold: 80
+      static_costmap_sample_step: 4
+      static_merge_radius: 0.5
+      max_tracked_people: 12
+      max_static_obstacles: 16
+
+      # Output saturation limits
+      command_frame: "base_link"
+      goal_lookahead_distance: 0.6
+      robot_radius: 0.3
+      robot_v_pref: 0.7
+      human_radius: 0.3
+      policy_time_step: 0.25
+      max_linear_speed: 0.7
+      max_lateral_speed: 0.4
+      max_angular_speed: 1.5
+{% endblock -%}

@@ -1,0 +1,96 @@
+robot_name: "jackal"
+initial_pose: [9.0, 9.0, -3.140]
+map_path: "maps/social_nav_obstacles_map.yaml"
+
+episodes: # episodes to be run
+  - episode_1
+  - episode_2
+  - episode_3
+  - episode_4
+  - episode_5
+  - episode_6
+  - episode_7
+  - episode_8
+  - episode_9
+  - episode_10
+  - episode_11
+  - episode_12
+  - episode_13
+  - episode_14
+  - episode_15
+  - episode_16
+  - episode_17
+  - episode_18
+  - episode_19
+  - episode_20
+  - episode_21
+  - episode_22
+  - episode_23
+  - episode_24
+  - episode_25
+  - episode_26
+  - episode_27
+  - episode_28
+  - episode_29
+
+goals:
+  episode_1:  [2.41, 8.5]
+  episode_2:  [2.42, 8.58]
+  episode_3:  [1.42, 6.23]
+  episode_4:  [2.1, 0.31]
+  episode_5:  [1.5, 7.32]
+  episode_6:  [1.5, 0.32]
+  episode_7:  [0.73, 0.32]
+  episode_8:  [2.1, 8.61]
+  episode_9:  [3.6, 2.0]
+  episode_10: [8.87, 0.356]
+  episode_11: [8.89, -3.056]
+  episode_12: [3.59, -3.056]
+  episode_13: [8.52, -6.8]
+  episode_14: [6.2, -8.02]
+  episode_15: [8.5, 3.5]
+  episode_16: [0.63, 0.62]
+  episode_17: [4.33, -3.82]
+  episode_18: [6.33, -4.82]
+  episode_19: [6.65, -1.94]
+  episode_20: [3.69, 0.52]
+  episode_21: [3.69, 0.32]
+  episode_22: [7.8, -7.55]
+  episode_23: [7.32, -7.35]
+  episode_24: [1.25, -8.1]
+  episode_25: [1.25, -8.1]
+  episode_26: [2.31, -8.1]
+  episode_27: [0.73, 0.32]
+  episode_28: [4.0, 2.0]
+  episode_29: [8.0, -8.0]
+
+poses:
+  episode_1:  [9.0, 8.18, -3.2]
+  episode_2:  [9.0, 8.52, -3.1]
+  episode_3:  [8.0, 8.12, -3.1]
+  episode_4:  [0.58, 8.62, -1.573]
+  episode_5:  [0.785, 0.62, 1.573]
+  episode_6:  [1.58, 8.42, -1.573]
+  episode_7:  [2.1, 8.61, -1.571]
+  episode_8:  [0.63, 0.62, 1.571]
+  episode_9:  [8.57, 3.781, -3.141]
+  episode_10: [8.47, 3.779, -3.139]
+  episode_11: [4.0, 5.07, -1.576]
+  episode_12: [3.6, 4.0, -1.576]
+  episode_13: [3.7, 0.94, -1.576]
+  episode_14: [8.84, 1.2, -2.61]
+  episode_15: [4.82, 3.63, 0.0]
+  episode_16: [4.25, 2.17, -1.576]
+  episode_17: [7.45, 1.21, -1.576]
+  episode_18: [6.45, 1.21, -0.576]
+  episode_19: [0.91, -5.31, 0.2]
+  episode_20: [2.09, -0.55, -1.576]
+  episode_21: [1.95, 0.8, -1.576]
+  episode_22: [1.25, -8.1, 0.1]
+  episode_23: [1.25, -7.6, 0.14]
+  episode_24: [8.32, -8.35, -3.139]
+  episode_25: [8.32, -8.05, -3.139]
+  episode_26: [8.82, -2.43, -3.141]
+  episode_27: [9.0, 8.12, -3.1]
+  episode_28: [1.25, -8.3, 0.12]
+  episode_29: [4.0, 2.0, -1.576]

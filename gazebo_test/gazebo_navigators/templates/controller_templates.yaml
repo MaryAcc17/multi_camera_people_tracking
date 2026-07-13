@@ -1,0 +1,32 @@
+# Registered Controllers Registry
+# This file will be populated by the registration system
+controller_templates:
+  - dwa
+  - dwb
+  - mppi
+  - orca
+  - pure_sfm
+  - mpc
+  - crowdnav
+  
+dwa:
+  template: 'controllers/dwa_controller.yaml.j2'
+  description: 'Dynamic Window Approach controller'
+dwb:
+  template: 'controllers/dwb_controller.yaml.j2'
+  description: 'DWB controller (ROS2 Navigation2)'
+mppi:
+  template: 'controllers/mppi_controller.yaml.j2'
+  description: 'Model Predictive Path Integral controller'
+orca:
+  template: 'controllers/orca_controller.yaml.j2'
+  description: 'Optimal Reciprocal Collision Avoidance controller'
+pure_sfm:
+  template: 'controllers/pure_sfm_controller.yaml.j2'
+  description: 'Pure Social Force Model controller'
+mpc:
+  template: 'controllers/mpc_controller.yaml.j2'
+  description: 'Model Predictive Control controller'
+crowdnav:
+  template: 'controllers/crowdnav_controller.yaml.j2'
+  description: 'CrowdNav RL-based controller using Pybind11'

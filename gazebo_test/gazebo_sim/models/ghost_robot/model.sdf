@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="ghost_robot">
+    <static>true</static>
+    <pose>0 0 0 0 0 0</pose>
+    <link name="base_link">
+      <pose>0 0 0 0 0 0</pose>
+    </link>
+  </model>
+</sdf>

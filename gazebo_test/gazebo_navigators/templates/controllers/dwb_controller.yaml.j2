@@ -1,0 +1,65 @@
+{% block controller_config -%}
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 0.6
+      max_vel_y: 0.0
+      max_vel_theta: 1.4
+      min_speed_xy: 0.0
+      max_speed_xy: 1.0
+      min_speed_theta: 0.0
+      # Add high threshold velocity for turtlebot 3 issue.
+      # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
+      acc_lim_x: 2.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+      vx_samples: 20
+      vy_samples: 0
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.25
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: [
+        "Oscillation",
+        "BaseObstacle",
+        "GoalAlign",
+        "PathAlign",
+        "PathDist",
+        "GoalDist",
+        {% if controller.social_plugin is defined and controller.social_plugin %}
+        "SocialForceCritic",
+        {% endif %}
+        ]
+      BaseObstacle:
+        scale: 0.02
+      PathAlign:
+        scale: 32.0
+        forward_point_distance: 0.5
+      GoalAlign:
+        scale: 24.0
+        forward_point_distance: 0.5
+      PathDist:
+        scale: 32.0
+      GoalDist:
+        scale: 24.0
+      {% if controller.social_plugin is defined and controller.social_plugin %}
+      SocialForceCritic:
+        scale: 0.5
+        fov_angle: 1.57
+        robot_radius: 0.24
+        person_radius: 0.25
+        person_velocity: 0.5
+        naive_goal_time: 0.5
+        new_resolution: 0.2
+        max_vel_x: 0.6
+      {% endif %}
+{% endblock -%}

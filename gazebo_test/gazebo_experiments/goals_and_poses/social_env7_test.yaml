@@ -1,0 +1,15 @@
+robot_name: "jackal"
+initial_pose: [-0.3, -4.5, 1.57]
+map_path: "maps/social_env_test_map.yaml"
+
+episodes: # episodes to be run
+  - episode_1
+  - episode_2
+
+goals:
+  episode_1:  [-4.0, -5.0]
+  episode_2:  [4.0, -4.0]
+
+poses:
+  episode_1:  [-3.5, 1.8, -1.57]
+  episode_2:  [2.3, 1.4, -1.57]

@@ -1,0 +1,109 @@
+{% block controller_config -%}
+      {% if controller.enlarged_state is defined and controller.enlarged_state -%}
+          plugin: "mpc_enlarged_state::MPCEnlargedState"
+      {% elif controller.social_motion is defined and controller.social_motion -%}
+          plugin: "mpc_sfm_motion_model::MPCSFMMotionModel"
+      {% elif controller.base is defined and controller.base -%}
+          plugin: "mpc_base::MPCBase"
+      {% else -%}
+          {{ raise("MPC controller requires either 'enlarged_state', 'social_motion' or 'base' feature to be true.") }}
+      {% endif %}
+      transform_tolerance: 0.5
+      max_robot_pose_search_dist: 6.0
+      max_linear_vel: 0.6
+      min_linear_vel: -0.2
+      max_angular_vel: 1.4
+      trajectorizer:
+        waypoint_dist_tol: 0.05
+        desired_linear_vel: 0.6
+        omnidirectional: false
+        lookahead_dist: 2.0
+        allow_reverse: false
+        reverse_heading_threshold: 2.56
+        max_reverse_speed: 0.2
+        base_frame: "base_link"
+        time_step: 0.10
+        max_time: 2.0
+        motion_model_type: "unicycle"
+        max_angular_accel: 3.0
+        max_linear_accel: 2.5
+        min_approach_linear_velocity: 0.05
+        
+        rotate_to_heading_angular_vel: 0.4
+        rotate_to_heading_min_angle: 1.57
+        use_interpolation: true
+        use_rotate_to_heading: true
+        # Obstacle avoidance (regulated pure pursuit)
+        use_cost_regulated_linear_velocity_scaling: true
+        cost_scaling_dist: 0.6
+        cost_scaling_gain: 1.0
+        inflation_cost_scaling_factor: 3.0
+        use_collision_detection: false
+        max_allowed_time_to_collision_up_to_carrot: 1.0
+        projection_lookahead_resolution: 0.1
+        
+      optimizer:
+        linear_solver_type: "DENSE_SCHUR"
+        param_tol: 1.0e-9
+        fn_tol: 1.0e-5
+        gradient_tol: 1.0e-8
+        max_iterations: 40
+        control_horizon: 18
+        parameter_block_length: 6
+        discretization: 1
+        debug_optimizer: false
+        current_path_weight: 0.5
+        current_cmds_weight: 0.5
+        goal_proximity_activation_radius: 0.75
+        goal_proximity_decay_distance: 0.25
+        agent_velocity_bound: 0.6
+        stationary_agent_velocity_bound: 0.01
+        max_agents: 3
+        critics:
+          enable_social_work: {% if controller.social_work_cost is defined and controller.social_work_cost %}true{% else %}false{% endif %}
+            
+          enable_path_align: {% if controller.path_align_cost is defined %}{{ controller.path_align_cost | lower }}{% else %}false{% endif %}
+            
+          enable_path_follow: {% if controller.path_follow_cost is defined %}{{ controller.path_follow_cost | lower }}{% else %}false{% endif %}
+            
+          enable_proxemics: {% if controller.proxemics_cost is defined %}{{ controller.proxemics_cost | lower }}{% else %}false{% endif %}
+            
+          enable_angle: {% if controller.angle_cost is defined %}{{ controller.angle_cost | lower }}{% else %}false{% endif %}
+            
+          enable_crossing: {% if controller.crossing_cost is defined %}{{ controller.crossing_cost | lower }}{% else %}false{% endif %}
+        
+        weights:
+          # NAVIGATION — baseline
+          distance_weight: 12.5       # peak 1.0 → effective 10    (path tracking)
+          angle_weight: 2.2           # peak 1.0 → effective 2     (heading to path)
+          goal_align_weight: 8.5      # peak 1.0 → effective 8     (final heading)
+          goal_proximity_weight: 5.5  # peak 3.7 → effective 11    (goal attraction)
+          velocity_weight: 6.0       # peak 0.36 → effective 5.4  (speed tracking)
+          velocity_feasibility_weight: 9.0  # peak 0.29 → effective 5.8  (smoothness)
+          obstacle_weight: 0.12       # peak 254 → effective 20    (costmap avoidance)
+
+          # SOCIAL — should dominate navigation when activated
+          social_weight: 25.0          # peak 7.1 → effective 35    (SFM force avoidance)
+          proxemics_weight: 8.0      # peak 2.9 → effective 29    (proximity penalty)
+          agent_angle_weight: 12.0    # peak 1.7 → effective 20    (don't aim at agents)
+          velocity_alignment_weight: 5.0  # sub-weight INSIDE AgentAngleCost (multiplies the velocity component)
+          crossing_weight: 20.0        # peak 3.9 → effective 31    (yield at crossings)
+          crossing_bearing_weight: 5.0  # sub-weight INSIDE CrossingCost (bearing vs speed ratio)
+
+          # NAVIGATION — baseline (crowded env)
+          #distance_weight: 9.5       # peak 1.0 → effective 10    (path tracking)
+          #angle_weight: 1.5           # peak 1.0 → effective 2     (heading to path)
+          #goal_align_weight: 8.0      # peak 1.0 → effective 8     (final heading)
+          #goal_proximity_weight: 5.0  # peak 3.7 → effective 11    (goal attraction)
+          #velocity_weight: 6.5       # peak 0.36 → effective 5.4  (speed tracking)
+          #velocity_feasibility_weight: 9.0  # peak 0.29 → effective 5.8  (smoothness)
+          #obstacle_weight: 0.15       # peak 254 → effective 20    (costmap avoidance)
+
+          # SOCIAL — should dominate navigation when activated
+          #social_weight: 20.0          # peak 7.1 → effective 35    (SFM force avoidance)
+          #proxemics_weight: 10.0      # peak 2.9 → effective 29    (proximity penalty)
+          #agent_angle_weight: 12.0    # peak 1.7 → effective 20    (don't aim at agents)
+          #velocity_alignment_weight: 5.0  # sub-weight INSIDE AgentAngleCost (multiplies the velocity component)
+          #crossing_weight: 20.0        # peak 3.9 → effective 31    (yield at crossings)
+          #crossing_bearing_weight: 5.0  # sub-weight INSIDE CrossingCost (bearing vs speed ratio) [commented-out duplicate]
+          {% endblock -%}

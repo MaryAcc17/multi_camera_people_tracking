@@ -1,0 +1,32 @@
+repositories:
+  jackal/jackal:
+    type: git
+    url: https://github.com/PIC4SeRPlatforms/jackal.git
+    version: humble-devel
+  jackal/jackal_desktop:
+    type: git
+    url: https://github.com/andreaostuni/jackal_desktop.git
+    version: humble
+  jackal/jackal_simulator:
+    type: git
+    url: https://github.com/PIC4SeRPlatforms/jackal_simulator.git
+    version: humble
+  gazebo_ros_additional_pkgs:
+    type: git
+    url: https://github.com/andreaostuni/gazebo_ros_additional_pkgs.git
+  people:
+    type: git
+    url: https://github.com/wg-perception/people.git
+    version: ros2
+  hunav_sim:
+    type: git
+    url: https://github.com/robotics-upo/hunav_sim.git
+    version: humble
+  hunav_gazebo_wrapper:
+    type: git
+    url: https://github.com/robotics-upo/hunav_gazebo_wrapper.git
+    version: humble
+  launch_pal:
+    type: git
+    url: https://github.com/pal-robotics/launch_pal.git
+    version: master

@@ -1,0 +1,11 @@
+<library path="people_display">
+  <class name="People"
+         type="rviz_people_display::PeopleDisplay"
+         base_class_type="rviz_common::Display">
+    <description>
+      Displays people_msgs/People as heading arrows (yaw from position.z),
+      optional velocity arrows and name labels.
+    </description>
+    <message_type>people_msgs/msg/People</message_type>
+  </class>
+</library>

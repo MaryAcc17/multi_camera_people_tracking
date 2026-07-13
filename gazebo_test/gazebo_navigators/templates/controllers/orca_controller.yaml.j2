@@ -1,0 +1,20 @@
+{% block controller_config -%}
+      plugin: "orca_controller::ORCAController"
+      robot_radius: 0.5
+      person_radius: 0.5
+      max_vel_x: 0.5
+      person_velocity: 0.5
+      naive_goal_time: 0.5
+      fov_angle: 1.57
+      new_resolution: 0.2
+      max_ang_vel: 1.4
+      transform_tolerance: 0.5
+      visualize: false
+      max_robot_pose_search_dist: 3.0
+      local_goal_dist: 1.0
+      n_steps: 10
+      neighbor_dist: 2.0
+      max_neighbors: 10
+      time_horizon: 1.0
+      time_horizon_obst: 1.0
+{% endblock -%}

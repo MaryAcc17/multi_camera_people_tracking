@@ -1,0 +1,21 @@
+objectives:  
+  time_to_reach_goal: 
+    weight: 1.0
+    active: 
+    minimize: true
+  social_work_step:
+    weight: 1.0
+    active: true
+    minimize: true
+  path_length: 
+    weight: 1.0
+    active: true
+    minimize: true
+  avg_speed: 
+    weight: 1.0
+    active: true
+    minimize: true
+  personal_space_violation:
+    weight: 1.0
+    active: true
+    minimize: true

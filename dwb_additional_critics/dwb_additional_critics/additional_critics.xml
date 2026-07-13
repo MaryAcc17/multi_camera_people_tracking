@@ -1,0 +1,7 @@
+<class_libraries>
+  <library path="dwb_additional_critics">
+    <class type="dwb_critics::SocialForceCritic" base_class_type="dwb_core::TrajectoryCritic">
+      <description>dwb critic for social force</description>
+    </class>
+  </library>
+</class_libraries>

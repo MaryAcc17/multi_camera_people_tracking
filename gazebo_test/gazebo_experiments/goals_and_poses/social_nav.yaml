@@ -1,0 +1,41 @@
+# filepath: /workspaces/hunavsim_ws/src/gazebo_test/gazebo_test/goals_and_poses/social_nav.yaml
+robot_name: "jackal" # The name of the robot
+goal_name: "goal_box" # The name of the goal
+initial_pose: [9.0, 9.0, -3.140] # Initial pose of the robot x, y, theta
+map_path: "maps/social_nav_map.yaml" # The path to the map file
+
+episodes: # episodes to be run
+  - episode_1
+  - episode_2
+  - episode_3
+  - episode_4
+  - episode_5
+  - episode_6
+  - episode_7
+  - episode_8
+  - episode_9
+  - episode_10
+
+goals: # The goal positions of the robot in x, y
+  episode_1: [2.41, 8.5]
+  episode_2: [2.42, 8.58]
+  episode_3: [1.42, 6.23]
+  episode_4: [2.1, 0.31]
+  episode_5: [1.5, 7.32]
+  episode_6: [1.5, 0.32]
+  episode_7: [0.73, 0.32]
+  episode_8: [2.1, 8.61]
+  episode_9: [3.6, 2.0]
+  episode_10: [8.87, 0.356]
+
+poses: # The poses of the robot in x, y, theta
+  episode_1: [9.0, 8.18, -3.2]
+  episode_2: [9.0, 8.12, -3.1]
+  episode_3: [8.0, 8.12, -3.1]
+  episode_4: [0.58, 8.62, -1.573]
+  episode_5: [0.785, 0.62, 1.573]
+  episode_6: [1.58, 8.42, -1.573]
+  episode_7: [2.1, 8.61, -1.571]
+  episode_8: [0.63, 0.62, 1.571]
+  episode_9: [8.57, 3.781, -3.141]
+  episode_10: [8.47, 3.779, -3.139]

@@ -1,0 +1,20 @@
+{% block controller_config -%}
+      plugin: "sfm_controller::SFMController"
+      robot_radius: 0.6
+      person_radius: 3.0
+      max_vel_x: 0.6
+      person_velocity: 0.3
+      naive_goal_time: 0.5
+      fov_angle: 1.57
+      new_resolution: 0.2
+      max_ang_vel: 1.4
+      transform_tolerance: 0.5
+      visualize: true
+      max_robot_pose_search_dist: 3.0
+      local_goal_dist: 0.7
+      n_steps: 20
+      force_factor_desired: 1.5
+      force_factor_obstacle: 10.0
+      force_sigma_obstacle: 0.2
+      force_factor_social: 5.1
+{% endblock -%}

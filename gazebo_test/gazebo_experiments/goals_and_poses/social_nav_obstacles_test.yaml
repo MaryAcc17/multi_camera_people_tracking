@@ -1,0 +1,54 @@
+robot_name: "jackal"
+initial_pose: [9.0, 9.0, -3.140]
+map_path: "maps/social_nav_obstacles_map.yaml"
+
+episodes: # episodes to be run
+  - episode_1
+  - episode_2
+  - episode_3
+  - episode_4
+  - episode_5
+  - episode_6
+  - episode_7
+  - episode_8
+  - episode_9
+  - episode_10
+  - episode_11
+  - episode_12
+  - episode_13
+  - episode_14
+  - episode_15
+
+goals:
+  episode_1:  [2.41, 8.15]
+  episode_2:  [2.42, 8.01]
+  episode_3:  [2.1, 0.31]
+  episode_4:  [0.83, -0.92]
+  episode_5:  [2.1, 8.61]
+  episode_6:  [3.6, 2.0]
+  episode_7:  [8.87, 0.356]
+  episode_8:  [8.89, -3.056]
+  episode_9:  [8.52, -6.8]
+  episode_10: [6.2, -8.02]
+  episode_11: [6.65, -1.94]
+  episode_12: [3.69, 0.52]
+  episode_13: [7.32, -7.35]
+  episode_14: [1.25, -8.1]
+  episode_15: [2.31, -8.1]
+
+poses:
+  episode_1:  [9.0, 8.81, -3.2]
+  episode_2:  [9.0, 8.12, -3.1]
+  episode_3:  [0.58, 8.62, -1.573]
+  episode_4:  [2.1, 8.61, -1.571]
+  episode_5:  [1.23, 0.62, 1.571]
+  episode_6:  [8.57, 3.781, -3.141]
+  episode_7:  [8.47, 3.779, -3.139]
+  episode_8:  [4.0, 5.07, -1.576]
+  episode_9:  [3.7, 0.94, -1.576]
+  episode_10: [8.84, 1.2, -2.61]
+  episode_11: [0.91, -6.81, 0.2]
+  episode_12: [2.09, -0.55, -1.576]
+  episode_13: [1.25, -8.1, 0.1]
+  episode_14: [8.32, -8.35, -3.139]
+  episode_15: [8.82, -2.43, -3.141]

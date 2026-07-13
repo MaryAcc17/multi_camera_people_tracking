@@ -1,0 +1,32 @@
+# in this file we define the parameters for the optimization process
+FollowPath:
+      optimizer:
+        weights:
+          distance_weight: 
+            max: 20.0
+            min: 0.0
+          social_weight: 
+            max: 120.0 # 120.0 # 400.0
+            min: 0.0
+          velocity_weight: 
+            max: 10.0
+            min: 0.0
+          angle_weight: 
+            max: 250.0
+            min: 0.0
+          agent_angle_weight: 
+            max: 40.0 #50.0
+            min: 0.0
+          velocity_feasibility_weight: 
+            max: 5.0
+            min: 0.0
+          goal_align_weight: 
+            max: 10.0
+            min: 0.0
+          obstacle_weight: 
+            max: 0.15
+            min: 0.0
+          proxemics_weight: 
+            max: 100.0
+            min: 0.0
+            

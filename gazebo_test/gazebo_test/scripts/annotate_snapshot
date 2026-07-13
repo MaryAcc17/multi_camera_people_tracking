@@ -1,0 +1,710 @@
+#!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+"""Overlay episode goals and start poses onto a Gazebo snapshot image."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+import matplotlib
+
+# Force a non-interactive backend so the script can run on headless machines
+# (CI, containers, SSH) without needing the Qt "xcb" plugin.
+matplotlib.use("Agg", force=True)
+
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
+from matplotlib import colors as mcolors
+from matplotlib import patches
+from tf_transformations import (
+    quaternion_from_euler,
+    quaternion_matrix,
+    euler_matrix,
+    euler_from_matrix,
+)
+
+from gazebo_test.script_utils.parsing_utils import parse_experiment_name
+
+
+@dataclass
+class CameraIntrinsics:
+    width_px: int
+    height_px: int
+    hfov: float
+    vfov: float
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+
+
+@dataclass
+class CameraPose:
+    position: np.ndarray  # xyz in map frame
+    rpy: np.ndarray  # roll, pitch, yaw
+    rotation_world_from_camera: np.ndarray  # 3x3
+    rotation_camera_from_world: np.ndarray  # 3x3
+
+
+@dataclass
+class RecordedTrajectory:
+    label: str
+    samples: List[Tuple[float, float, float]]
+    color: Optional[Tuple[float, float, float]] = None
+    key: Optional[str] = None
+
+
+def parse_args() -> argparse.Namespace:
+    default_camera_model = (
+        Path(__file__).resolve().parents[2]
+        / "gazebo_sim"
+        / "models"
+        / "bird_eye_camera"
+        / "model.sdf"
+    )
+    parser = argparse.ArgumentParser(
+        description=(
+            "Annotate a Gazebo snapshot with robot start poses and goals derived "
+            "from a goals_and_poses YAML file."
+        )
+    )
+    parser.add_argument(
+        "snapshot",
+        type=Path,
+        nargs="?",
+        help=(
+            "Path to the snapshot image. If omitted, provide --experiment to "
+            "auto-resolve the snapshot path."
+        ),
+    )
+    parser.add_argument(
+        "goals_file",
+        type=Path,
+        nargs="?",
+        help=(
+            "Path to the goals_and_poses YAML file used for the experiment. "
+            "If omitted, set --experiment to resolve it automatically."
+        ),
+    )
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        default=None,
+        help=(
+            "Experiment identifier defined in gazebo_test_experiments. "
+            "The associated goals_and_poses and camera config paths will be resolved "
+            "using the same logic as the full_experiment script."
+        ),
+    )
+    parser.add_argument(
+        "--camera-model",
+        type=Path,
+        default=default_camera_model,
+        help="Path to the bird-eye camera SDF model file",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Destination for the annotated image",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Optional subset of episode names to draw (default: all)",
+    )
+    parser.add_argument(
+        "--ground-height",
+        type=float,
+        default=0.0,
+        help="Height of the ground plane in the world frame (default: 0.0)",
+    )
+    parser.add_argument(
+        "--trajectory-file",
+        type=Path,
+        default=None,
+        help="Optional YAML file containing a recorded trajectory to overlay.",
+    )
+    parser.add_argument(
+        "--trajectory-color",
+        type=str,
+        default="#ffffff",
+        help="Color to use for the recorded trajectory polyline.",
+    )
+    parser.add_argument(
+        "--trajectory-width",
+        type=float,
+        default=2.5,
+        help="Line width (in pixels) for the recorded trajectory.",
+    )
+    parser.add_argument(
+        "--people-trajectories",
+        type=Path,
+        default=None,
+        help="Optional YAML file produced by environment_camera with people trajectories.",
+    )
+    parser.add_argument(
+        "--people-width",
+        type=float,
+        default=1.5,
+        help="Line width (in pixels) for people trajectories.",
+    )
+    parser.add_argument(
+        "--people-alpha",
+        type=float,
+        default=0.85,
+        help="Alpha (0-1) for people trajectory polylines.",
+    )
+    parser.add_argument(
+        "--camera-config",
+        type=Path,
+        default=None,
+        help=(
+            "Optional YAML file providing camera position and orientation. If not provided, "
+            "the script will attempt to resolve the camera pose from the goals_and_poses file."
+        ),
+    )
+    parser.add_argument(
+        "--snapshots-dir",
+        type=Path,
+        default=Path("gazebo_snapshots"),
+        help=(
+            "Base directory containing experiment outputs from environment_camera. "
+            "Used in conjunction with --experiment."
+        ),
+    )
+    parser.add_argument(
+        "--stage-label",
+        type=str,
+        default="bird_eye",
+        help=(
+            "Stage label used when capturing snapshots (matches environment_camera "
+            "--stage_label). Only used when resolving paths from --experiment."
+        ),
+    )
+
+    parser.add_argument(
+        "--print-labels",
+        action="store_true",
+        help="Whether to print episode labels next to the goal markers.",
+    )
+    return parser.parse_args()
+
+
+def load_image(path: Path) -> np.ndarray:
+    image = plt.imread(path)
+    if image is None:
+        raise FileNotFoundError(f"Unable to read snapshot image at {path}")
+    if image.ndim == 2:
+        image = np.stack([image] * 3, axis=-1)
+    return image
+
+
+def load_goals_and_poses(path: Path) -> Dict[str, Dict[str, Sequence[float]]]:
+    with path.open("r", encoding="utf-8") as stream:
+        data = yaml.safe_load(stream) or {}
+    episodes: List[str] = data.get("episodes") or []
+    if not episodes:
+        inferred = sorted(
+            set(data.get("goals", {}).keys()) | set(data.get("poses", {}).keys())
+        )
+        episodes = inferred
+    goals = data.get("goals", {})
+    poses = data.get("poses", {})
+    return {
+        "episodes": episodes,
+        "goals": goals,
+        "poses": poses,
+    }
+
+
+def load_camera_config(path: Path) -> Tuple[List[float], List[float]]:
+    with path.open("r", encoding="utf-8") as stream:
+        data = yaml.safe_load(stream) or {}
+    data = data.get("environment_camera", data)  # Support both nested and flat formats
+    data = data.get("ros__parameters", data)  # Support ROS 2.6+ parameter file format
+    return data.get("camera_position", []), data.get("camera_orientation_rpy", [])
+
+
+def load_people_trajectories(path: Path, default_z: float) -> List[RecordedTrajectory]:
+    print(f"Loading people trajectories from {path}...")
+    with path.open("r", encoding="utf-8") as stream:
+        data = yaml.safe_load(stream) or {}
+    agents_section = data.get("agents", [])
+    if not isinstance(agents_section, list):
+        raise ValueError(f"'agents' section missing or invalid in {path}")
+
+    trajectories: List[RecordedTrajectory] = []
+    for idx, entry in enumerate(agents_section):
+        if not isinstance(entry, dict):
+            continue
+        samples_data = entry.get("samples") or entry.get("points")
+        if not isinstance(samples_data, list):
+            continue
+        positions: List[Tuple[float, float, float]] = []
+        for sample in samples_data:
+            position = None
+            if isinstance(sample, dict):
+                position = sample.get("position")
+                if position is None and {"x", "y"} <= sample.keys():
+                    position = [
+                        sample.get("x"),
+                        sample.get("y"),
+                        sample.get("z", default_z),
+                    ]
+            elif isinstance(sample, (list, tuple)):
+                position = sample
+            if position is None:
+                continue
+            if isinstance(position, dict):
+                x = float(position.get("x", 0.0))
+                y = float(position.get("y", 0.0))
+                z = float(position.get("z", default_z))
+            else:
+                if len(position) < 2:
+                    continue
+                x = float(position[0])
+                y = float(position[1])
+                z = float(position[2]) if len(position) > 2 else float(default_z)
+            positions.append((x, y, z))
+        if len(positions) < 2:
+            continue
+        raw_color = entry.get("color")
+        rgb_color: Optional[Tuple[float, float, float]] = None
+        if raw_color:
+            try:
+                rgb_color = tuple(mcolors.to_rgb(raw_color))
+            except ValueError:
+                rgb_color = None
+        label = str(
+            entry.get("label")
+            or entry.get("key")
+            or entry.get("id")
+            or f"person_{idx+1}"
+        )
+        trajectories.append(
+            RecordedTrajectory(
+                label=label,
+                samples=positions,
+                color=rgb_color,
+                key=str(entry.get("key") or entry.get("id") or label),
+            )
+        )
+    return trajectories
+
+
+def derive_snapshot_and_people_paths(
+    experiment_tag: str,
+    stage_label: str,
+    base_dir: Path,
+) -> Tuple[Path, Path]:
+    """Mirror environment_camera naming to derive snapshot and trajectory paths."""
+    sanitized_stage = stage_label.replace("/", "-")
+    base_dir = base_dir.expanduser()
+    snapshot_dir = base_dir / experiment_tag / "images"
+    snapshot_path = snapshot_dir / f"{experiment_tag}_{sanitized_stage}_raw.jpg"
+    stem = (
+        snapshot_path.stem[:-4]
+        if snapshot_path.stem.endswith("_raw")
+        else snapshot_path.stem
+    )
+    trajectories_dir = snapshot_path.parents[1] / "trajectories"
+    trajectories_path = trajectories_dir / f"{stem}_people_trajectories.yaml"
+    return snapshot_path, trajectories_path
+
+
+def parse_camera_intrinsics(model_path: Path) -> CameraIntrinsics:
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(model_path)
+    root = tree.getroot()
+    camera = root.find(".//sensor[@type='camera']/camera")
+    if camera is None:
+        raise ValueError(f"Camera sensor not found in {model_path}")
+    hfov = float(camera.findtext("horizontal_fov"))
+    width = int(camera.find("image/width").text)
+    height = int(camera.find("image/height").text)
+    aspect = height / width
+    vfov = 2.0 * math.atan(math.tan(hfov / 2.0) * aspect)
+    fx = (width / 2.0) / math.tan(hfov / 2.0)
+    fy = (height / 2.0) / math.tan(vfov / 2.0)
+    cx = width / 2.0
+    cy = height / 2.0
+    return CameraIntrinsics(width, height, hfov, vfov, fx, fy, cx, cy)
+
+
+def resolve_camera_pose(
+    camera_section: Dict[str, object], episodes: Iterable[str]
+) -> Tuple[List[float], List[float]]:
+    def coerce(vec: Optional[Sequence[float]], expected: int) -> Optional[List[float]]:
+        if vec is None:
+            return None
+        if isinstance(vec, str):
+            try:
+                parsed = yaml.safe_load(vec)
+            except Exception:  # noqa: BLE001
+                return None
+            vec = parsed
+        if isinstance(vec, dict):
+            ordered: List[float] = []
+            for key in ("x", "y", "z"):
+                if key in vec:
+                    ordered.append(vec[key])
+            if not ordered:
+                ordered = [vec.get(k) for k in ("roll", "pitch", "yaw") if k in vec]
+            vec = ordered
+        if isinstance(vec, (list, tuple)) and len(vec) >= expected:
+            try:
+                return [float(vec[i]) for i in range(expected)]
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    entry: Optional[Dict[str, object]] = None
+    if isinstance(camera_section, dict):
+        # Direct mapping camera_pose: { snapshot_position: ..., snapshot_orientation: ... }
+        if any(
+            k in camera_section for k in ("snapshot_position", "snapshot_orientation")
+        ):
+            entry = camera_section
+        else:
+            for ep in episodes:
+                candidate = camera_section.get(ep)
+                if isinstance(candidate, dict):
+                    entry = candidate
+                    break
+            if entry is None:
+                episodes_section = camera_section.get("episodes")
+                if isinstance(episodes_section, dict):
+                    for ep in episodes:
+                        candidate = episodes_section.get(ep)
+                        if isinstance(candidate, dict):
+                            entry = candidate
+                            break
+                if entry is None:
+                    entry = (
+                        camera_section.get("default")
+                        if isinstance(camera_section.get("default"), dict)
+                        else None
+                    )
+    if entry is None:
+        raise ValueError("No valid camera pose entry found in goals_and_poses file")
+    pos = coerce(entry.get("snapshot_position"), 3)
+    ori = coerce(entry.get("snapshot_orientation"), 3)
+    if pos is None or ori is None:
+        raise ValueError(
+            "Camera pose entry is missing required position or orientation"
+        )
+    return pos, ori
+
+
+def build_camera_pose(position: Sequence[float], rpy: Sequence[float]) -> CameraPose:
+    pos = np.array(position, dtype=float)
+    roll, pitch, yaw = [float(v) for v in rpy]
+    quat = quaternion_from_euler(roll, pitch, yaw)
+    rotation_world_from_camera = quaternion_matrix(quat)[:3, :3]
+    rotation_camera_from_world = rotation_world_from_camera.T
+    return CameraPose(
+        pos,
+        np.array([roll, pitch, yaw], dtype=float),
+        rotation_world_from_camera,
+        rotation_camera_from_world,
+    )
+
+
+def compute_image_footprint(
+    pose: CameraPose,
+    intrinsics: CameraIntrinsics,
+    ground_height: float,
+) -> Tuple[float, float, float]:
+    axis_dir = pose.rotation_world_from_camera[:, 0]
+    denom = axis_dir[2]
+    if abs(denom) < 1e-6:
+        depth_along_axis = abs(pose.position[2] - ground_height)
+    else:
+        depth_along_axis = (ground_height - pose.position[2]) / denom
+    if depth_along_axis <= 0:
+        depth_along_axis = abs(depth_along_axis)
+    width_m = 2.0 * depth_along_axis * math.tan(intrinsics.hfov / 2.0)
+    height_m = 2.0 * depth_along_axis * math.tan(intrinsics.vfov / 2.0)
+    return depth_along_axis, width_m, height_m
+
+
+def world_to_pixel(
+    pose: CameraPose,
+    intrinsics: CameraIntrinsics,
+    point_xyz: Sequence[float],
+) -> Optional[Tuple[int, int]]:
+    relative = np.array(point_xyz, dtype=float) - pose.position
+    cam_vec = pose.rotation_camera_from_world @ relative
+    depth = cam_vec[0]
+    if depth <= 0:
+        return None
+    u = intrinsics.fx * (-cam_vec[1] / depth) + intrinsics.cx
+    v = intrinsics.fy * (-cam_vec[2] / depth) + intrinsics.cy
+    if math.isnan(u) or math.isnan(v):
+        return None
+    return int(round(u)), int(round(v))
+
+
+def rotate_to_world_yaw(camera_pose: CameraPose, local_yaw: float) -> float:
+    """Convert a yaw angle from local frame to world frame using camera's yaw rotation."""
+    # compute the rotation from camera to world use quaternion math
+    local_rot = euler_matrix(0, 0, local_yaw)[:3, :3]
+    combined_rotation = local_rot @ camera_pose.rotation_camera_from_world
+    # extract the yaw angle from the combined rotation
+    _, _, world_yaw = euler_from_matrix(combined_rotation)
+    # get the yaw angle of the camera in the world frame
+    return world_yaw
+
+
+def _episode_number_from_name(name: str, fallback: int) -> str:
+    """Extract a numeric episode identifier from names like 'episode_5'."""
+    match = re.search(r"(\d+)(?!.*\d)", name)
+    if match:
+        try:
+            return str(int(match.group(1)))
+        except ValueError:
+            return match.group(1)
+    return str(fallback)
+
+
+def annotate_image(
+    image: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    pose: CameraPose,
+    episodes: Iterable[str],
+    goals: Dict[str, Sequence[float]],
+    start_poses: Dict[str, Sequence[float]],
+    ground_height: float,
+    people_trajectories: Optional[List[RecordedTrajectory]] = None,
+    people_line_width: float = 1.5,
+    people_alpha: float = 0.85,
+    print_labels: bool = True,
+) -> plt.Figure:
+    height, width = image.shape[:2]
+    dpi = 100
+    fig_w = width / dpi
+    fig_h = height / dpi
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+    ax.imshow(image)
+    ax.set_axis_off()
+
+    palette = plt.get_cmap("Set1")  # Qualitative palette for distinct episode colors
+    # do not use the grey and the green colors from the palette as they are hard to see on the snapshot
+    excluded_colors = [2, 8]  # Indices of grey and green colors in the Set1 palette
+
+    def episode_color(index: int) -> Tuple[float, float, float]:
+        color_index = (index - 1) % (palette.N - len(excluded_colors))
+        for excluded in excluded_colors:
+            if color_index >= excluded:
+                color_index += 1
+        color = palette(color_index / palette.N)
+        return (float(color[0]), float(color[1]), float(color[2]))
+
+    if people_trajectories:
+        print(f"Overlaying {len(people_trajectories)} people trajectories...")
+        for idx, traj in enumerate(people_trajectories):
+            projected: List[Tuple[int, int]] = []
+            for x, y, z in traj.samples:
+                proj = world_to_pixel(pose, intrinsics, (x, y, z))
+                if proj is not None:
+                    projected.append(proj)
+            if len(projected) < 2:
+                continue
+            xs, ys = zip(*projected)
+
+            ax.plot(
+                xs,
+                ys,
+                color="black" if traj.color is None else traj.color,
+                linewidth=people_line_width,
+                alpha=people_alpha,
+                linestyle="--",
+            )
+
+    for idx, episode in enumerate(episodes, start=1):
+        start = start_poses.get(episode)
+        print(f"Episode {episode}: start={start} | goal={goals.get(episode)}")
+        goal = goals.get(episode)
+        if not start or not goal:
+            continue
+        start_xyz = (float(start[0]), float(start[1]), ground_height)
+        goal_xyz = (float(goal[0]), float(goal[1]), ground_height)
+        start_px = world_to_pixel(pose, intrinsics, start_xyz)
+        start_yaw = rotate_to_world_yaw(pose, start[2] if len(start) > 2 else 0.0)
+
+        goal_px = world_to_pixel(pose, intrinsics, goal_xyz)
+        if start_px is None and goal_px is None:
+            continue
+        color = episode_color(idx)
+        label = _episode_number_from_name(str(episode), idx)
+        if start_px is not None:
+            length = 50  # pixels
+            dx = length * math.cos(start_yaw) if len(start) > 2 else length
+            dy = length * math.sin(start_yaw) if len(start) > 2 else 0.0
+            ax.add_patch(
+                patches.FancyArrowPatch(
+                    (start_px[0], start_px[1]),
+                    (start_px[0] - dy, start_px[1] - dx),
+                    facecolor=color,
+                    fill=True,
+                    mutation_scale=30,
+                    edgecolor="black",
+                    linewidth=1,
+                )
+            )
+        if goal_px is not None:
+            ax.add_patch(
+                patches.Circle(
+                    goal_px,
+                    20,
+                    facecolor=color,
+                    fill=True,
+                    edgecolor="black",
+                )
+            )
+            if print_labels:
+                ax.text(
+                    goal_px[0],
+                    goal_px[1],
+                    label,
+                    color="black",
+                    fontweight="bold",
+                    fontsize=max(
+                        18, min(18, fig_h * 2)
+                    ),  # Scale font size with figure height
+                    ha="center",
+                    va="center",
+                )
+    fig.tight_layout(pad=0)
+    return fig
+
+
+def main() -> None:
+    args = parse_args()
+    experiment_info: Optional[Dict[str, object]] = None
+    experiment_tag = args.experiment
+
+    goals_path: Optional[Path] = args.goals_file
+    if args.experiment:
+        experiment_info = parse_experiment_name(args.experiment)
+        resolved_goals = experiment_info.get("goals_and_poses")
+        if not resolved_goals:
+            raise ValueError(
+                f"Experiment '{args.experiment}' does not define a goals_and_poses file."
+            )
+        goals_path = Path(resolved_goals)
+    if goals_path is None:
+        raise ValueError(
+            "Goals file not provided. Supply a goals_and_poses path or set --experiment."
+        )
+    goals_path = goals_path.expanduser()
+    dataset = load_goals_and_poses(goals_path)
+
+    snapshot_path: Optional[Path] = args.snapshot
+    people_path: Optional[Path] = args.people_trajectories
+    if experiment_tag:
+        auto_snapshot, auto_people = derive_snapshot_and_people_paths(
+            experiment_tag,
+            args.stage_label,
+            args.snapshots_dir,
+        )
+        if snapshot_path is None:
+            snapshot_path = auto_snapshot
+            print(
+                f"Resolved snapshot path from experiment_tag '{experiment_tag}': {snapshot_path}"
+            )
+        if people_path is None:
+            people_path = auto_people
+            print(
+                f"Resolved people trajectories path from experiment_tag '{experiment_tag}': {people_path}"
+            )
+    if snapshot_path is None:
+        raise ValueError(
+            "Snapshot path not provided. Supply a snapshot file or set --experiment."
+        )
+    snapshot_path = snapshot_path.expanduser()
+    if not snapshot_path.is_file():
+        raise FileNotFoundError(f"Snapshot image '{snapshot_path}' does not exist.")
+    image = load_image(snapshot_path)
+
+    camera_config_path: Optional[Path] = args.camera_config
+    if experiment_info and camera_config_path is None:
+        candidate = experiment_info.get("camera_config_file")
+        if candidate:
+            camera_config_path = Path(candidate)
+    camera_pose_position: Optional[List[float]] = None
+    camera_pose_orientation: Optional[List[float]] = None
+    if camera_config_path:
+        camera_pose_position, camera_pose_orientation = load_camera_config(
+            camera_config_path.expanduser()
+        )
+    else:
+        raise ValueError("Unable to resolve camera pose. Provide --camera-config")
+
+    requested_eps = args.episodes or dataset["episodes"]
+    missing = [ep for ep in requested_eps if ep not in dataset["episodes"]]
+    if missing:
+        raise ValueError(f"Episodes {missing} are not defined in {goals_path}")
+    intrinsics = parse_camera_intrinsics(args.camera_model)
+
+    if camera_pose_position is None or camera_pose_orientation is None:
+        raise ValueError(
+            "Camera pose could not be fully resolved from the provided inputs."
+        )
+    camera_pose = build_camera_pose(camera_pose_position, camera_pose_orientation)
+    people_traj: Optional[List[RecordedTrajectory]] = None
+    if people_path:
+        people_path = people_path.expanduser()
+        if people_path.is_file():
+            people_traj = load_people_trajectories(people_path, args.ground_height)
+            print(f"Loaded {len(people_traj)} people trajectories from {people_path}")
+        else:
+            print(
+                f"Warning: people trajectories file {people_path} does not exist; skipping overlay."
+            )
+    depth, width_m, height_m = compute_image_footprint(
+        camera_pose, intrinsics, args.ground_height
+    )
+    print(
+        f"Estimated optical depth to plane: {depth:.2f} m | footprint: {width_m:.2f} m x {height_m:.2f} m"
+    )
+    fig = annotate_image(
+        image,
+        intrinsics,
+        camera_pose,
+        requested_eps,
+        dataset["goals"],
+        dataset["poses"],
+        args.ground_height,
+        people_trajectories=people_traj,
+        people_line_width=args.people_width,
+        people_alpha=args.people_alpha,
+        print_labels=args.print_labels,
+    )
+    if args.output is None:
+
+        # remove suffixes like "_raw" and stage labels from the original snapshot name for the output file
+        if snapshot_path.stem.endswith("_raw"):
+            base_stem = snapshot_path.stem[:-4]
+        else:
+            base_stem = snapshot_path.stem
+        output_path = snapshot_path.parent / f"{base_stem}_annotated.png"
+    else:
+        output_path = args.output.expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+    print(f"Annotated snapshot written to {output_path}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,39 @@
+# The robot will be spawned at this position
+robot_name: "jackal" # The name of the robot
+initial_pose: [-0.3, -4.5, 1.57] # Initial pose of the robot x, y, theta
+map_path: "maps/social_env_test_map.yaml" # The path to the map file
+
+episodes: # episodes to be run
+  - episode_1
+  - episode_2
+  - episode_3
+  - episode_4
+  - episode_5
+  - episode_6
+  - episode_7
+  - episode_8
+  - episode_9
+  - episode_10
+  
+goals: # The goal positions of the robot in x, y
+  episode_1: [-5.0, 4.0]
+  episode_2: [0.6, 2.0]
+  episode_3: [0.6, 4.2]
+  episode_4: [0.6, -4.5]
+  episode_5: [0.6, -4.5]
+  episode_6: [-3.5, -2.4]
+  episode_7: [-4.0, -4.0]
+  episode_8: [2.5, -1.0]
+  episode_9: [4.0, -5.0]
+  episode_10: [4.8, -4.8]
+poses: # The poses of the robot in x, y, theta
+  episode_1: [0.6, 4.25, -3.14]
+  episode_2: [-0.3, -4.5, 1.57]
+  episode_3: [-5.0, 4.25, 0.0]
+  episode_4: [0.6, 4.25, -1.57]
+  episode_5: [-5.0, 4.25, 0.0]
+  episode_6: [-3.5, 1.6, -1.57]
+  episode_7: [-3.0, 1.6, -1.57]
+  episode_8: [2.5, 4.0, 0.0]
+  episode_9: [2.5, 1.4, -1.57]
+  episode_10: [4.4, -0.8, -3.14]

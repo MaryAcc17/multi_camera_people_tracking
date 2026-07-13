@@ -1,0 +1,18 @@
+<library path="goal_pose_annotator_panel">
+  <class name="GoalPoseAnnotatorPanel"
+         type="rviz_goal_pose_annotator::GoalPoseAnnotatorPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Captures start and goal poses from /initialpose and /goal_pose and appends an episode
+      to a YAML file in goals_and_poses format.
+    </description>
+  </class>
+  <class name="SemanticMapPanel"
+         type="rviz_goal_pose_annotator::SemanticMapPanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Creates semantic map YAML files by adding labels and room/object entries
+      with map metadata.
+    </description>
+  </class>
+</library>

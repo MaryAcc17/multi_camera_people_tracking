@@ -1,0 +1,15 @@
+environment_camera:
+  ros__parameters:
+    use_sim_time: True
+    output_dir: gazebo_snapshots
+    experiment_tag: social_nav
+    stage_label: bird_eye
+    run_id: 0
+    capture_delay_sec: 10.0
+    image_timeout_sec: 5.0
+    camera_model_path: package://gazebo_sim/models/bird_eye_camera/model.sdf
+    camera_position: [5.0, 0.0, 13.1]
+    camera_orientation_rpy: [0.0, 1.57, 0.0]
+    record_people_trajectories: True
+    people_trajectory_sample_period_sec: 0.3
+    people_trajectory_duration_sec: 10.0

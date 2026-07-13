@@ -1,0 +1,23 @@
+# Registered Costmap Layer Templates
+# This file will be populated by the registration system
+costmap_layers_templates:
+  - obstacle_layer
+  - inflation_layer
+  - social_layer
+  - static_layer
+
+obstacle_layer:
+  template: 'costmap_layers/obstacle_layer.yaml.j2'
+  description: 'Obstacle Layer for Costmap2D'
+
+inflation_layer:
+  template: 'costmap_layers/inflation_layer.yaml.j2'
+  description: 'Inflation Layer for Costmap2D'
+
+social_layer:
+  template: 'costmap_layers/social_layer.yaml.j2'
+  description: 'Social Layer for Costmap2D'
+
+static_layer:
+  template: 'costmap_layers/static_layer.yaml.j2'
+  description: 'Static Layer for Costmap2D'

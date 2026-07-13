@@ -1,0 +1,33 @@
+tracker:
+  ros__parameters:
+    visualize                       : true
+    rgbd_option                     : false
+    compressed                      : false
+    rgbd_topic                      : '/camera/rgbd'
+    color_topic                     : '/camera_front_center_color/image_raw'
+    # color_topic                     : '/camera/camera/color/image_raw/compressed'
+    depth_topic                     : '/camera_front_center_color/depth/image_raw'
+    info_topic                      : '/camera_front_center_color/camera_info'
+    odom_topic                      : '/odom'
+    tracked_people_topic            : '/tracked_people'
+    vicon_people_topic              : '/vicon/people'
+    output_image_topic              : '/result_image'
+    fixed_frame                     : 'map'
+    camera_frame                    : 'camera_front_center_color_optical_frame'
+    robot_frame                     : 'camera_front_center_link'
+    yolo_model                      : '/workspaces/hunavsim_devcontainer/src/People_tracking-master/pic4people_tracking/models/yolov8s-pose_openvino_int8_model/yolov8s-pose.xml'
+    reid_model                      : '/workspaces/hunavsim_devcontainer/src/People_tracking-master/pic4people_tracking/models/reid_models/osnet_x0_25_market1501_int8_openvino_mixed_model'
+    width                           : 640
+    height                          : 480
+    fps                             : 30
+    max_distance                    : 5.0
+    yolo_min_conf_threshold         : 0.45
+    max_shoulder_hip_ratio          : 0.65
+    max_hip_shoulder_hip_ratio      : 0.42
+
+to_csv_node:
+  ros__parameters:
+    tracked_people_topic            : '/tracked_people'
+    vicon_people_topic              : '/vicon/people'
+    tracker                         : 'strongsort_pose'
+

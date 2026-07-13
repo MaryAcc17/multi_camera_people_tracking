@@ -1,0 +1,28 @@
+# Repository excluded from this project
+/navigation2/
+
+# Rosbags and all offline experimental material contained inside
+/People_tracking-master/pic4people_tracking/rosbags/
+
+# ROS 2 generated directories
+build/
+install/
+log/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Temporary and operating-system files
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
