@@ -166,11 +166,21 @@ class GlobalTrack:
             self.yaw = avg_angle(self.yaw, yaw)
 
         if dt > 0:
-            vx = (x - old_x) / dt
-            vy = (y - old_y) / dt
+            measured_vx = (x - old_x) / dt
+            measured_vy = (y - old_y) / dt
 
-            self.vx = 0.7 * self.vx + 0.3 * vx
-            self.vy = 0.7 * self.vy + 0.3 * vy
+            # A newly-created track starts with zero velocity.  Applying the
+            # ordinary EMA immediately would retain only 30% of the very first
+            # motion estimate and can severely underestimate the displacement
+            # during an early camera handover.  Therefore the first available
+            # velocity measurement initializes the state directly; subsequent
+            # measurements use the original EMA smoothing.
+            if self.hits <= 1:
+                self.vx = measured_vx
+                self.vy = measured_vy
+            else:
+                self.vx = 0.7 * self.vx + 0.3 * measured_vx
+                self.vy = 0.7 * self.vy + 0.3 * measured_vy
 
         self.x = x
         self.y = y
@@ -209,20 +219,29 @@ class GlobalTrack:
         }
 
     def predicted_position_at(self, t):
-        """Return the predicted position of the track at time t, using a simple constant-velocity model with exponential decay."""
+        """Predict the track position with an exponentially decaying velocity.
+
+        If v(t) = v0 * exp(-k t), the travelled displacement is the integral
+        of that velocity, v0 * (1 - exp(-k*dt)) / k.  The previous
+        implementation used the final decayed velocity for the whole interval
+        (v0 * exp(-k*dt) * dt), which strongly underestimated motion after even
+        a short observation gap.
+        """
         dt = t - self.last_update
 
         if dt <= 0.0:
             return self.x, self.y
 
-        # Exponential damping prevents stale tracks from drifting indefinitely
-        # when no new detection is available.
-        decay = np.exp(-self.velocity_decay_gain * dt)
+        k = float(self.velocity_decay_gain)
+        if k <= 1e-9:
+            motion_scale = dt
+        else:
+            motion_scale = (1.0 - np.exp(-k * dt)) / k
 
-        vx = self.vx * decay
-        vy = self.vy * decay
-
-        return self.x + vx * dt, self.y + vy * dt
+        return (
+            self.x + self.vx * motion_scale,
+            self.y + self.vy * motion_scale,
+        )
 
 
 class FusionNode(Node):
@@ -320,6 +339,16 @@ class FusionNode(Node):
 
         self.no_reid_score = self._declare_and_get_param("no_reid_score", 0.50)
         self.reid_override_score = self._declare_and_get_param("reid_override_score", 0.75)
+
+        # During stale-track recovery, a strong appearance match can modestly
+        # enlarge the geometric candidate gate.  This is especially useful for
+        # cross-camera handovers where the local-ID relation is "unknown" and
+        # the motion model is uncertain.  The candidate must still pass the full
+        # multi-cue score and ambiguity checks; Re-ID does not directly force a
+        # match.
+        self.strong_reid_recovery_extra_gate = self._declare_and_get_param(
+            "strong_reid_recovery_extra_gate", 0.30
+        )
         
         # Large jumps, conflicting or unknown local ID relations provide soft penalties. A strong Re-ID match can
         # compensate them, while weak Re-ID keeps the association unlikely.
@@ -336,6 +365,21 @@ class FusionNode(Node):
         self.block_geom_weight = self._declare_and_get_param("block_geom_weight", 0.25)
         self.block_reid_weight = self._declare_and_get_param("block_reid_weight", 0.65)
         self.block_time_weight = self._declare_and_get_param("block_time_weight", 0.10)
+
+        # Duplicate-aware one-to-one safeguard.
+        # When a Global Track is already assigned in the current fusion cycle,
+        # a second unmatched detection is NOT automatically allowed to create
+        # a new Global ID. First test whether it is probably another observation
+        # of the same physical person that already consumed that track.
+        self.assigned_duplicate_same_camera_dist = self._declare_and_get_param(
+            "assigned_duplicate_same_camera_dist", 0.50
+        )
+        self.assigned_duplicate_cross_camera_dist = self._declare_and_get_param(
+            "assigned_duplicate_cross_camera_dist", 0.35
+        )
+        self.assigned_duplicate_reid_distance = self._declare_and_get_param(
+            "assigned_duplicate_reid_distance", 0.20
+        )
 
         self.output_frame = self._declare_and_get_param("output_frame", "map")
 
@@ -401,6 +445,15 @@ class FusionNode(Node):
             f"max_jump_without_local_id_match = {self.max_jump_without_local_id_match}"
         )
         self.get_logger().info(f"velocity_decay_gain = {self.velocity_decay_gain}")
+        self.get_logger().info(
+            f"strong_reid_recovery_extra_gate = {self.strong_reid_recovery_extra_gate}"
+        )
+        self.get_logger().info(
+            "duplicate-aware one-to-one: "
+            f"same_cam_dist={self.assigned_duplicate_same_camera_dist}, "
+            f"cross_cam_dist={self.assigned_duplicate_cross_camera_dist}, "
+            f"reid_dist={self.assigned_duplicate_reid_distance}"
+        )
         self.get_logger().info(f"use_reid_features = {self.use_reid_features}")
         self.get_logger().info(
             "Re-ID policy: embeddings are read directly from TrackedPerson messages; "
@@ -1027,6 +1080,23 @@ class FusionNode(Node):
             recovery_gate = dyn_thresh * float(self.recovery_gate_scale) + float(self.recovery_gate_extra)
             if relation == "match":
                 recovery_gate += float(self.local_id_extra_gate)
+
+            # Strong Re-ID is allowed to widen the recovery candidate gate only
+            # modestly and only when the local-ID evidence is not contradictory.
+            # This does not accept the association by itself: the pair must
+            # still pass _association_cost_with_appearance(), min_recovery_score
+            # and the recovery ambiguity test.
+            appearance_for_gate = self._appearance_distance(tr, d)
+            strong_reid_gate_extension = False
+            if appearance_for_gate is not None:
+                reid_score_for_gate = self._clamp01(1.0 - appearance_for_gate)
+                strong_reid_gate_extension = bool(
+                    reid_score_for_gate >= float(self.reid_override_score)
+                    and relation in ("match", "unknown")
+                )
+                if strong_reid_gate_extension:
+                    recovery_gate += float(self.strong_reid_recovery_extra_gate)
+
             recovery_gate = min(float(self.recovery_candidate_max_dist), recovery_gate)
             recovery_gate = max(float(self.reactivation_dist_thresh), recovery_gate)
 
@@ -1060,6 +1130,11 @@ class FusionNode(Node):
                 distance=float(dist),
                 recovery_gate=float(recovery_gate),
                 dynamic_threshold=float(dyn_thresh),
+                strong_reid_gate_extension=bool(strong_reid_gate_extension),
+                strong_reid_recovery_extra_gate=(
+                    float(self.strong_reid_recovery_extra_gate)
+                    if strong_reid_gate_extension else 0.0
+                ),
                 score=float(score),
                 min_score=float(self.min_recovery_score),
                 association_cost=float(cost_value),
@@ -1091,6 +1166,7 @@ class FusionNode(Node):
                 "has_appearance": has_appearance,
                 "use_appearance": use_appearance,
                 "geo_cost": geo_cost,
+                "strong_reid_gate_extension": strong_reid_gate_extension,
             })
 
         if len(candidates) == 0:
@@ -1165,6 +1241,7 @@ class FusionNode(Node):
             association_cost=float(best["cost"]),
             appearance_distance=float(best["appearance_dist"]),
             geo_cost=float(best["geo_cost"]),
+            strong_reid_gate_extension=bool(best.get("strong_reid_gate_extension", False)),
             has_appearance=bool(best["has_appearance"]),
             use_appearance=bool(best["use_appearance"]),
             embedding_updated=bool(update_info.get("embedding_updated", False)),
@@ -1186,17 +1263,145 @@ class FusionNode(Node):
 
         return True, best_tid
 
-    def _is_near_existing_track(self, d, now):
+    def _is_probable_duplicate_of_assigned_detection(self, d, assigned_detection):
         """
-        Prevent duplicate global IDs after recovery fails.
+        Return True when ``d`` is probably a duplicate observation of the same
+        physical person that already consumed a Global Track in the current
+        fusion cycle.
 
-        This remains separate from matching/recovery. It only asks whether this detection is probably already represented
-        by an existing global track. The decision is based mostly on Re-ID, with a
-        small geometry/time contribution.
+        The test intentionally combines:
+        - spatial proximity;
+        - same-camera vs cross-camera geometry;
+        - Re-ID appearance similarity when available.
+
+        Same-camera duplicates need a slightly wider spatial tolerance because
+        local trackers can output two overlapping tracks for the same person.
+        Cross-camera duplicates use a tighter threshold because cross-camera
+        duplicate suppression is already expected to be spatially strict.
         """
+        if assigned_detection is None:
+            return False, {}
+
+        dx = float(d["x"]) - float(assigned_detection["x"])
+        dy = float(d["y"]) - float(assigned_detection["y"])
+        dist = float(np.hypot(dx, dy))
+
+        same_camera = str(d.get("cam", "")) == str(assigned_detection.get("cam", ""))
+        spatial_thresh = (
+            float(self.assigned_duplicate_same_camera_dist)
+            if same_camera
+            else float(self.assigned_duplicate_cross_camera_dist)
+        )
+
+        emb_a = d.get("embedding", None)
+        emb_b = assigned_detection.get("embedding", None)
+        appearance_distance = cosine_distance(emb_a, emb_b)
+        has_appearance = appearance_distance is not None
+
+        spatial_close = dist <= spatial_thresh
+        appearance_close = (
+            has_appearance
+            and float(appearance_distance) <= float(self.assigned_duplicate_reid_distance)
+        )
+
+        # Require geometry plus appearance when appearance is available.
+        # If appearance is missing, geometry alone is not enough to suppress a
+        # same-camera unmatched detection, because that could hide a true second
+        # nearby person.
+        if has_appearance:
+            probable_duplicate = bool(spatial_close and appearance_close)
+        else:
+            probable_duplicate = bool((not same_camera) and spatial_close)
+
+        return probable_duplicate, {
+            "distance": dist,
+            "same_camera": same_camera,
+            "spatial_threshold": spatial_thresh,
+            "has_appearance": bool(has_appearance),
+            "appearance_distance": None if appearance_distance is None else float(appearance_distance),
+            "appearance_threshold": float(self.assigned_duplicate_reid_distance),
+        }
+
+    def _is_near_existing_track(
+        self,
+        d,
+        now,
+        unavailable_track_ids=None,
+        assigned_detection_by_track=None,
+    ):
+        """
+        Prevent duplicate Global-ID creation after recovery fails.
+
+        One-to-one safeguard with duplicate-awareness
+        ---------------------------------------------
+        If a track has already been assigned to another detection in the current
+        fusion cycle, that track cannot be used as an ordinary blocker for a
+        second distinct person.
+
+        However, before simply skipping the already-assigned track, compare the
+        unmatched detection with the detection that consumed it. If the two
+        detections are probably duplicate observations of the same physical
+        person, suppress the unmatched duplicate instead of creating another
+        Global ID.
+        """
+        if unavailable_track_ids is None:
+            unavailable_track_ids = set()
+        if assigned_detection_by_track is None:
+            assigned_detection_by_track = {}
+
         best = None
 
         for tid, tr in self.tracks.items():
+            if tid in unavailable_track_ids:
+                assigned_detection = assigned_detection_by_track.get(tid)
+                is_duplicate, duplicate_info = self._is_probable_duplicate_of_assigned_detection(
+                    d,
+                    assigned_detection,
+                )
+
+                if is_duplicate:
+                    self._add_debug_event(
+                        "NEW_TRACK_SUPPRESSED_DUPLICATE_OF_ASSIGNED",
+                        nearby_global_id=int(tid),
+                        camera=d["cam"],
+                        local_id=str(d.get("local_id", "")),
+                        det_x=float(d["x"]),
+                        det_y=float(d["y"]),
+                        assigned_camera="" if assigned_detection is None else str(assigned_detection.get("cam", "")),
+                        assigned_local_id="" if assigned_detection is None else str(assigned_detection.get("local_id", "")),
+                        assigned_det_x=None if assigned_detection is None else float(assigned_detection["x"]),
+                        assigned_det_y=None if assigned_detection is None else float(assigned_detection["y"]),
+                        distance=float(duplicate_info.get("distance", np.nan)),
+                        same_camera=bool(duplicate_info.get("same_camera", False)),
+                        spatial_threshold=float(duplicate_info.get("spatial_threshold", np.nan)),
+                        has_appearance=bool(duplicate_info.get("has_appearance", False)),
+                        appearance_distance=duplicate_info.get("appearance_distance", None),
+                        appearance_threshold=float(duplicate_info.get("appearance_threshold", np.nan)),
+                        reason="probable_duplicate_of_detection_already_assigned_to_track",
+                    )
+                    return True
+
+                self._add_debug_event(
+                    "NEW_TRACK_BLOCK_SKIP_ALREADY_ASSIGNED",
+                    nearby_global_id=int(tid),
+                    camera=d["cam"],
+                    local_id=str(d.get("local_id", "")),
+                    det_x=float(d["x"]),
+                    det_y=float(d["y"]),
+                    reason="track_already_assigned_in_current_cycle_and_detection_is_distinct",
+                )
+                continue
+            if tid in unavailable_track_ids:
+                self._add_debug_event(
+                    "NEW_TRACK_BLOCK_SKIP_ALREADY_ASSIGNED",
+                    nearby_global_id=int(tid),
+                    camera=d["cam"],
+                    local_id=str(d.get("local_id", "")),
+                    det_x=float(d["x"]),
+                    det_y=float(d["y"]),
+                    reason="track_already_assigned_in_current_cycle",
+                )
+                continue
             age = float(now) - float(tr.last_update)
             if age < 0.0 or age > float(self.reactivation_max_age):
                 continue
@@ -1557,6 +1762,10 @@ class FusionNode(Node):
         track_ids = self._get_matchable_track_ids(now)
         assigned_tracks = set()
         assigned_dets = set()
+        # Track the exact detection that consumed each Global Track in this
+        # fusion cycle. This lets the new-track blocker distinguish a genuine
+        # second person from a duplicate observation of the already-assigned one.
+        assigned_detection_by_track = {}
 
         if len(track_ids) == 0:
             self.get_logger().warn(
@@ -1573,13 +1782,19 @@ class FusionNode(Node):
                 if recovered:
                     assigned_tracks.add(recovered_tid)
                     assigned_dets.add(j)
+                    assigned_detection_by_track[recovered_tid] = d
                     continue
 
                 if recovered_tid == "ambiguous":
                     assigned_dets.add(j)
                     continue
 
-                if self._is_near_existing_track(d, now):
+                if self._is_near_existing_track(
+                    d,
+                    now,
+                    unavailable_track_ids=assigned_tracks,
+                    assigned_detection_by_track=assigned_detection_by_track,
+                ):
                     assigned_dets.add(j)
                     continue
 
@@ -1844,6 +2059,7 @@ class FusionNode(Node):
 
             assigned_tracks.add(tid)
             assigned_dets.add(j)
+            assigned_detection_by_track[tid] = d
 
             self._add_debug_event(
                 "MATCH_ACCEPTED",
@@ -1907,13 +2123,19 @@ class FusionNode(Node):
             if recovered:
                 assigned_tracks.add(recovered_tid)
                 assigned_dets.add(j)
+                assigned_detection_by_track[recovered_tid] = d
                 continue
 
             if recovered_tid == "ambiguous":
                 assigned_dets.add(j)
                 continue
 
-            if self._is_near_existing_track(d, now):
+            if self._is_near_existing_track(
+                d,
+                now,
+                unavailable_track_ids=assigned_tracks,
+                assigned_detection_by_track=assigned_detection_by_track,
+            ):
                 assigned_dets.add(j)
                 continue
 

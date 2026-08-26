@@ -1,0 +1,33 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:camera_mount prefix="${prefix}" tilt="${tilt}"/>
+
+  <joint name="${prefix}_camera_mount_joint" type="fixed">
+    <origin xyz="${xyz}" rpy="${rpy}" />
+    <parent link="${parent}"/>
+    <child link="${prefix}_camera_mount"/>
+  </joint>
+
+  <gazebo reference="${prefix}_camera_beam">
+    <sensor type="logical_camera" name="people_detector">
+      <logical_camera>
+        <near>0.25</near>
+        <far>4.0</far>
+        <horizontal_fov>${80.03*pi/180.0}</horizontal_fov>
+        <aspect_ratio>1.8</aspect_ratio>
+      </logical_camera>
+
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+      <update_rate>10</update_rate>
+
+      <plugin name="$(arg prefix)_people_detector_plugin" filename="libgazebo_people_detector.so">
+        <ros>
+          <namespace>$(arg prefix)</namespace>
+          <remapping>detected_people:=detected_people</remapping>
+        </ros>
+        <frame_name>map</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+</robot>

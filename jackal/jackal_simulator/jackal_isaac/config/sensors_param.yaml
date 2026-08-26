@@ -1,0 +1,8 @@
+jackal:
+  ros__parameters:
+    imu_enabled: "true"
+    camera_enabled: "false"
+    lidar_enabled: "true"
+    gps_enabled: "true"
+    range_sensors_enabled: "false"
+    
